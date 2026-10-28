@@ -7,6 +7,27 @@ Render Markdown in SwiftUI with native views, configurable styling, and extensib
 
 Powered by [swift-markdown](https://github.com/swiftlang/swift-markdown), fully compliant with the CommonMark standard.
 
+## numen fork
+
+`numen-tech/MarkdownView` branch `numen/main` is the `3.0.0` tag plus one feature, used by
+Private LLM's Read Aloud to light the sentence being spoken:
+
+```swift
+MarkdownView(reply)
+    .markdownHighlightedSpan(
+        MarkdownHighlightedSpan(range: sentenceBytes, color: .accentColor.opacity(0.25))
+    )
+```
+
+- `MarkdownHighlightedSpan.range` is a UTF-8 byte range into the markdown string the view was
+  given (`MarkdownView(_:)`'s text, or a parse result's source text). Pass `nil` to clear it.
+- Text runs inside the span get `color` as their background, across emphasis, links and soft line
+  breaks. The span is mapped through the view's math preprocessing, so `$…$` earlier on a line
+  does not shift it; a bound inside a formula snaps to the formula's edge.
+- A text node whose source holds escapes or entities, an inline code span and an inline formula
+  that the span touches are highlighted whole. Code blocks, display math and images never are.
+- `MarkdownView` caches its last parse, so a span change re-renders without re-parsing.
+
 ## Platforms
 
 - macOS 13.0+

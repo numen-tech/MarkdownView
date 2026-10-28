@@ -32,13 +32,16 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
             .visit(markup)
             .environment(\.markdownMathContext, mathContext)
             .environment(\.markdownElementRenderers, elementRenderers)
+            // numen fork: nested renderers (lists, headings) read the resolved highlight here.
+            .environment(\.markdownRendererConfiguration, configuration)
     }
-    
+
     func makeBody(forChildrenOf markup: any Markup) -> some View {
         self
             .descendInto(markup)
             .environment(\.markdownMathContext, mathContext)
             .environment(\.markdownElementRenderers, elementRenderers)
+            .environment(\.markdownRendererConfiguration, configuration)
     }
 
     func visitDocument(_ document: Markdown.Document) -> MarkdownNodeView {
@@ -74,11 +77,24 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
             }
         }
 
+        // numen fork: the runs inside the highlighted span get its background.
+        let highlight = configuration.resolvedHighlight
+        let highlightedRange = highlight?.highlightedRange(in: text.plainText, nodeRange: text.range)
+
         if mathContext != nil {
-            return InlineMathOrText(text: text.plainText)
-                .makeBody(mathContext: mathContext)
+            return InlineMathOrText(
+                text: text.plainText,
+                highlight: highlightedRange == nil ? nil : highlight,
+                highlightedRange: highlightedRange
+            )
+            .makeBody(mathContext: mathContext)
         }
 
+        if let highlight, let highlightedRange {
+            return MarkdownNodeView(
+                highlight.attributed(text.plainText, highlightedRange: highlightedRange)
+            )
+        }
         return MarkdownNodeView(text.plainText)
     }
     
@@ -112,7 +128,19 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
     }
     
     func visitSoftBreak(_ softBreak: SoftBreak) -> MarkdownNodeView {
-        MarkdownNodeView(" ")
+        // numen fork: a span running across the line break keeps its highlight unbroken.
+        // swift-markdown gives a soft break no range, so its neighbours bound it.
+        if let highlight = configuration.resolvedHighlight,
+           let parent = softBreak.parent, softBreak.indexInParent > 0,
+           let before = highlight.byteRange(of: parent.child(at: softBreak.indexInParent - 1)?.range),
+           let after = highlight.byteRange(of: parent.child(at: softBreak.indexInParent + 1)?.range),
+           highlight.range.lowerBound <= before.upperBound,
+           highlight.range.upperBound > after.lowerBound {
+            var space = AttributedString(" ")
+            space.backgroundColor = highlight.color
+            return MarkdownNodeView(space)
+        }
+        return MarkdownNodeView(" ")
     }
     
     func visitThematicBreak(_ thematicBreak: ThematicBreak) -> MarkdownNodeView {
@@ -130,6 +158,10 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         var attributedString = AttributedString(stringLiteral: inlineCode.code)
         attributedString.foregroundColor = tintColor
         attributedString.backgroundColor = tintColor.opacity(0.1)
+        // numen fork: an inline code span the highlighted span touches is highlighted whole.
+        if let highlight = configuration.resolvedHighlight, highlight.overlaps(inlineCode.range) {
+            attributedString.backgroundColor = highlight.color
+        }
         return MarkdownNodeView(attributedString)
     }
     

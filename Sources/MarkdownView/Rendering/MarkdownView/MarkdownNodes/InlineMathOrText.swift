@@ -11,6 +11,16 @@ import SwiftUI
 @MainActor
 struct InlineMathOrText {
     var text: String
+    /// numen fork: the highlight and the part of `text` it covers (both nil when none).
+    var highlight: MarkdownResolvedHighlight? = nil
+    var highlightedRange: Range<String.Index>? = nil
+
+    private func textNode(_ bounds: Range<String.Index>) -> MarkdownNodeView {
+        guard let highlight else { return MarkdownNodeView(String(text[bounds])) }
+        return MarkdownNodeView(
+            highlight.attributed(text, bounds: bounds, highlightedRange: highlightedRange)
+        )
+    }
 
     @preconcurrency
     @MainActor
@@ -19,7 +29,7 @@ struct InlineMathOrText {
         let mathSegments = self.mathSegments(mathContext: mathContext)
 
         guard !mathSegments.isEmpty else {
-            return MarkdownNodeView(text)
+            return textNode(text.startIndex..<text.endIndex)
         }
 
         var nodeViews: [MarkdownNodeView] = []
@@ -27,15 +37,22 @@ struct InlineMathOrText {
 
         for mathSegment in mathSegments {
             if processingIndex < mathSegment.range.lowerBound {
-                let normalText = String(text[processingIndex..<mathSegment.range.lowerBound])
-                nodeViews.append(MarkdownNodeView(normalText))
+                nodeViews.append(textNode(processingIndex..<mathSegment.range.lowerBound))
             }
 
             switch mathSegment.kind {
             case .inline:
-                nodeViews.append(MarkdownNodeView {
-                    InlineMath(latexText: mathSegment.latexText)
-                })
+                if let highlight, let highlightedRange,
+                   highlightedRange.overlaps(mathSegment.range) {
+                    nodeViews.append(MarkdownNodeView {
+                        InlineMath(latexText: mathSegment.latexText)
+                            .background(highlight.color)
+                    })
+                } else {
+                    nodeViews.append(MarkdownNodeView {
+                        InlineMath(latexText: mathSegment.latexText)
+                    })
+                }
             case .display:
                 if let identifier = mathSegment.identifier {
                     nodeViews.append(MarkdownNodeView {
@@ -49,13 +66,12 @@ struct InlineMathOrText {
         }
 
         if processingIndex < text.endIndex {
-            let remainingText = String(text[processingIndex..<text.endIndex])
-            nodeViews.append(MarkdownNodeView(remainingText))
+            nodeViews.append(textNode(processingIndex..<text.endIndex))
         }
 
         return MarkdownNodeView(nodeViews)
         #else
-        return MarkdownNodeView(text)
+        return textNode(text.startIndex..<text.endIndex)
         #endif
     }
 }

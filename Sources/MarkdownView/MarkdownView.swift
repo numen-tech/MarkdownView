@@ -14,7 +14,9 @@ public struct MarkdownView: View {
     @Environment(\.markdownMathContext) private var mathContext
     @Environment(\.markdownElementRenderers) private var elementRenderers
     @Environment(\.markdownFontGroup) private var fonts
-    
+    /// numen fork: a highlight step re-runs `body` with the same text; skip the re-parse.
+    @State private var parseCache = MarkdownParseCache()
+
     /// Creates a view that renders given markdown string.
     /// 
     /// - Parameter text: The markdown source to render.
@@ -30,7 +32,8 @@ public struct MarkdownView: View {
     }
     
     public var body: some View {
-        let parseResult = content.parse(
+        let parseResult = parseCache.parse(
+            content,
             with: MarkdownDocumentParsingOptions(
                 mathContext: mathContext,
                 elementRenderers: elementRenderers
@@ -38,12 +41,34 @@ public struct MarkdownView: View {
         )
         
         MarkdownViewRenderer(
-            configuration: configuration,
+            configuration: configuration.resolvingHighlight(against: parseResult),
             mathContext: parseResult.mathContext,
             elementRenderers: elementRenderers
         )
         .makeBody(for: parseResult.document)
         .font(fonts.body._swiftUIFont)
+    }
+}
+
+/// numen fork: the last raw-text parse of one `MarkdownView`, reused while its text and parsing
+/// options stay the same (a highlighted-span step changes only the renderer configuration).
+@MainActor
+final class MarkdownParseCache {
+    private var sourceText: String?
+    private var options: MarkdownDocumentParsingOptions = []
+    private var result: MarkdownParseResult?
+
+    func parse(
+        _ content: MarkdownContent,
+        with options: MarkdownDocumentParsingOptions
+    ) -> MarkdownParseResult {
+        guard case .rawText(let text) = content else { return content.parse(with: options) }
+        if let result, sourceText == text, self.options == options { return result }
+        let parsed = content.parse(with: options)
+        sourceText = text
+        self.options = options
+        result = parsed
+        return parsed
     }
 }
 

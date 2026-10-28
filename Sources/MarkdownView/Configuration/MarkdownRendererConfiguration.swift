@@ -15,6 +15,10 @@ struct MarkdownRendererConfiguration: Hashable, AllowingModifyThroughKeyPath, Se
     var tintColors: [MarkdownTintableComponent : Color] = [:]
     var underlineLinks: Bool = false
     var listConfiguration: MarkdownListConfiguration = MarkdownListConfiguration()
+    /// numen fork: the span set by `markdownHighlightedSpan(_:)`, in source coordinates.
+    var highlightedSpan: MarkdownHighlightedSpan? = nil
+    /// numen fork: `highlightedSpan` resolved against the document a `MarkdownView` renders.
+    var resolvedHighlight: MarkdownResolvedHighlight? = nil
 
     func resolvedMarkdownURL(for destination: String) -> URL? {
         URL(string: destination, relativeTo: preferredBaseURL)
