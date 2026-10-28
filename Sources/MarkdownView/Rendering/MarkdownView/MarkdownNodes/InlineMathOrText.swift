@@ -42,17 +42,14 @@ struct InlineMathOrText {
 
             switch mathSegment.kind {
             case .inline:
-                if let highlight, let highlightedRange,
-                   highlightedRange.overlaps(mathSegment.range) {
-                    nodeViews.append(MarkdownNodeView {
-                        InlineMath(latexText: mathSegment.latexText)
-                            .background(highlight.color)
-                    })
-                } else {
-                    nodeViews.append(MarkdownNodeView {
-                        InlineMath(latexText: mathSegment.latexText)
-                    })
-                }
+                // One view type with or without the highlight, so a formula entering or leaving
+                // the span keeps its identity (and a wide formula its scroll position).
+                let isHighlighted = highlightedRange?.overlaps(mathSegment.range) ?? false
+                let background = isHighlighted ? highlight?.color ?? .clear : .clear
+                nodeViews.append(MarkdownNodeView {
+                    InlineMath(latexText: mathSegment.latexText)
+                        .background(background)
+                })
             case .display:
                 if let identifier = mathSegment.identifier {
                     nodeViews.append(MarkdownNodeView {

@@ -105,11 +105,12 @@ struct MarkdownHighlightedSpanTests {
         #expect(runs == ["Use *stars* here. And plain."])
     }
 
-    @Test("Trailing spaces before a hard break fall back to the whole node", .tags(.rendering))
+    @Test("A text node before a hard break maps exactly despite its trailing spaces", .tags(.rendering))
     func hardBreak() throws {
+        // cmark's range covers "Line one  "; the text "Line one" still sits at its start.
         let markdown = "Line one  \nline two."
         let runs = try highlightedRuns(markdown, span: Self.bytes(of: "one", in: markdown))
-        #expect(runs == ["Line one"])
+        #expect(runs == ["one"])
     }
 
     @Test("Entities fall back to the whole node", .tags(.rendering))
@@ -222,6 +223,44 @@ struct MarkdownHighlightedSpanTests {
         #expect(resolvedConfiguration.highlightedSpan == nil)
         let highlight = try #require(resolvedConfiguration.resolvedHighlight)
         #expect(Self.highlightedText(in: parseResult.document, highlight: highlight) == "gamma")
+    }
+
+    @Test(
+        "A lazy continuation line finds its text despite cmark's column",
+        .tags(.rendering),
+        arguments: ["> first\nsecond line here.", "> first\nsecond line here.\n\nAfter."]
+    )
+    func lazyContinuation(markdown: String) throws {
+        let highlight = try #require(resolved(markdown, span: Self.bytes(of: "second", in: markdown)))
+        #expect(Self.highlightedText(in: document(markdown), highlight: highlight) == "second")
+    }
+
+    @Test("An empty span inside a formula stays empty", .tags(.rendering, .math))
+    func emptySpanInsideMath() {
+        #expect(resolved("Take $x$ now.", span: 6..<6, math: true) == nil)
+    }
+
+    @Test("The parse cache compares bytes, not canonical equivalence", .tags(.parsing))
+    func parseCacheIsByteExact() {
+        let cache = MarkdownParseCache()
+        let composed = "\u{E9} abc"
+        let decomposed = "e\u{301} abc"
+        #expect(composed == decomposed)
+        _ = cache.parse(.rawText(composed), with: [])
+        #expect(cache.parse(.rawText(decomposed), with: []).sourceSnapshot.text.utf8.count == 7)
+    }
+
+    @Test("A highlight step keeps converted HTML instead of flashing raw tags", .tags(.rendering))
+    func htmlKeepsConversionAcrossHighlightSteps() {
+        var input = AttributedString("Hello ")
+        input += AttributedString("<b>world</b>", attributes: AttributeContainer().isHTML(true))
+        var highlighted = input
+        highlighted[highlighted.startIndex..<highlighted.index(highlighted.startIndex, offsetByCharacters: 5)]
+            .backgroundColor = Self.color
+        let rendered = _MarkdownText.RenderedState(input: input, output: AttributedString("Hello world"))
+        #expect(_MarkdownText.visibleText(input: highlighted, rendered: rendered) == rendered.output)
+        let changed = AttributedString("Bye <b>x</b>")
+        #expect(_MarkdownText.visibleText(input: changed, rendered: rendered) == changed)
     }
 
     @Test("A highlight step reuses the view's parse of unchanged text", .tags(.parsing))

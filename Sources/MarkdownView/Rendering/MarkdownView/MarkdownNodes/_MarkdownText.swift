@@ -57,8 +57,23 @@ struct _MarkdownText: View {
         // `@State`. Only use the cached output when it was produced from the
         // exact input currently being displayed; otherwise fall back to `input`
         // so the visible text cannot regress while the next render catches up.
-        guard rendered.input == input else { return input }
+        guard rendered.input == input else {
+            // numen fork: a highlighted-span step changes only backgrounds; keep the converted
+            // HTML (with the old highlight) until the new conversion lands, rather than flash
+            // the raw tags.
+            if input.runs.contains(where: { $0.isHTML ?? false }),
+               withoutBackgrounds(rendered.input) == withoutBackgrounds(input) {
+                return rendered.output
+            }
+            return input
+        }
         return rendered.output
+    }
+
+    private static func withoutBackgrounds(_ text: AttributedString) -> AttributedString {
+        var text = text
+        text.backgroundColor = nil
+        return text
     }
 
     struct RenderedState {

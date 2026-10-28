@@ -32,8 +32,7 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
             .visit(markup)
             .environment(\.markdownMathContext, mathContext)
             .environment(\.markdownElementRenderers, elementRenderers)
-            // numen fork: nested renderers (lists, headings) read the resolved highlight here.
-            .environment(\.markdownRendererConfiguration, configuration)
+            .markdownResolvedHighlight(configuration.resolvedHighlight)
     }
 
     func makeBody(forChildrenOf markup: any Markup) -> some View {
@@ -41,7 +40,7 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
             .descendInto(markup)
             .environment(\.markdownMathContext, mathContext)
             .environment(\.markdownElementRenderers, elementRenderers)
-            .environment(\.markdownRendererConfiguration, configuration)
+            .markdownResolvedHighlight(configuration.resolvedHighlight)
     }
 
     func visitDocument(_ document: Markdown.Document) -> MarkdownNodeView {

@@ -63,7 +63,11 @@ final class MarkdownParseCache {
         with options: MarkdownDocumentParsingOptions
     ) -> MarkdownParseResult {
         guard case .rawText(let text) = content else { return content.parse(with: options) }
-        if let result, sourceText == text, self.options == options { return result }
+        // Byte equality, not `==`: canonically equivalent strings differ in UTF-8 offsets.
+        if let result, let sourceText, sourceText.utf8.elementsEqual(text.utf8),
+           self.options == options {
+            return result
+        }
         let parsed = content.parse(with: options)
         sourceText = text
         self.options = options
