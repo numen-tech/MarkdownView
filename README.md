@@ -26,6 +26,9 @@ MarkdownView(reply)
   does not shift it; a bound inside a formula snaps to the formula's edge.
 - A text node whose source holds escapes or entities, an inline code span and an inline formula
   that the span touches are highlighted whole. Code blocks, display math and images never are.
+- Known limitation: cmark misreports the columns of a lazy block-quote continuation line
+  (`> one\ntwo`) and of the line after a backslash hard break. Nodes there fall back to
+  whole-node highlights at the reported position, which can be off by the marker's width.
 - `MarkdownView` caches its last parse, so a span change re-renders without re-parsing.
 
 ## Platforms

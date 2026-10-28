@@ -52,14 +52,14 @@ struct MarkdownResolvedHighlight: Hashable, Sendable {
 
     /// The part of a text node's `plainText` the span covers, or nil when it covers none.
     ///
-    /// Exact when the node's text sits verbatim on its source line (`located`); otherwise
-    /// (escapes, entities) the whole node, when its reported source range overlaps the span.
+    /// Exact when the node's reported source range holds its text verbatim (`verbatim`);
+    /// otherwise (escapes, entities, a column cmark misreports) the whole node, when its
+    /// reported source range overlaps the span.
     func highlightedRange(in plainText: String, nodeRange: SourceRange?) -> Range<String.Index>? {
-        guard !plainText.isEmpty, let nodeRange,
-              let line = lineRange(nodeRange.lowerBound.line), line.overlaps(range)
+        guard !plainText.isEmpty, let reported = byteRange(of: nodeRange), reported.overlaps(range)
         else { return nil }
-        guard let nodeBytes = located(plainText, nodeRange: nodeRange) else {
-            return overlaps(nodeRange) ? plainText.startIndex..<plainText.endIndex : nil
+        guard let nodeBytes = verbatim(plainText, in: reported) else {
+            return plainText.startIndex..<plainText.endIndex
         }
         let lower = max(nodeBytes.lowerBound, range.lowerBound)
         let upper = min(nodeBytes.upperBound, range.upperBound)
@@ -73,30 +73,23 @@ struct MarkdownResolvedHighlight: Hashable, Sendable {
         return start < end ? start..<end : nil
     }
 
-    /// Where a text node's `plainText` sits in `processedText`: its reported range when those
-    /// bytes are the text, else the occurrence of the text on the reported line nearest the
-    /// reported column (cmark misplaces columns on a lazy continuation line, `> a\nb`), else nil.
-    func located(_ plainText: String, nodeRange: SourceRange) -> Range<Int>? {
-        guard let line = lineRange(nodeRange.lowerBound.line) else { return nil }
+    /// The bytes of `reported` that hold `plainText`: all of them when they are the text, or
+    /// their start when only spaces and tabs follow it (cmark's range of the text before a hard
+    /// break covers the break's trailing spaces). Nil otherwise: escapes and entities, whose
+    /// source is longer than their text, and a column cmark misreports (a lazy continuation
+    /// line, `> a\nb`; the line after a backslash hard break), which this does not search for.
+    func verbatim(_ plainText: String, in reported: Range<Int>) -> Range<Int>? {
         let needle = plainText.utf8
         let count = needle.count
-        let lineStart = line.lowerBound
-        let lineEnd = line.upperBound
-        let reported = lineStart + max(nodeRange.lowerBound.column - 1, 0)
-        guard count <= lineEnd - lineStart else { return nil }
-
+        guard count <= reported.count else { return nil }
         let utf8 = processedText.utf8
-        func matches(at start: Int) -> Bool {
-            let lower = utf8.index(utf8.startIndex, offsetBy: start)
-            let upper = utf8.index(lower, offsetBy: count)
-            return utf8[lower..<upper].elementsEqual(needle)
-        }
-        if reported + count <= lineEnd, matches(at: reported) { return reported..<(reported + count) }
-        var best: Int?
-        for start in lineStart...(lineEnd - count) where matches(at: start) {
-            if best.map({ abs(start - reported) < abs($0 - reported) }) ?? true { best = start }
-        }
-        return best.map { $0..<($0 + count) }
+        let lower = utf8.index(utf8.startIndex, offsetBy: reported.lowerBound)
+        let textEnd = utf8.index(lower, offsetBy: count)
+        let upper = utf8.index(lower, offsetBy: reported.count)
+        guard utf8[lower..<textEnd].elementsEqual(needle),
+              utf8[textEnd..<upper].allSatisfy({ $0 == UInt8(ascii: " ") || $0 == UInt8(ascii: "\t") })
+        else { return nil }
+        return reported.lowerBound..<(reported.lowerBound + count)
     }
 
     /// `text` with ``color`` as the background of `highlightedRange` clamped to `bounds`.
@@ -121,13 +114,6 @@ struct MarkdownResolvedHighlight: Hashable, Sendable {
     }
 
     // MARK: Coordinates
-
-    /// The UTF-8 offsets of a 1-based line of `processedText`, its line terminator included.
-    func lineRange(_ line: Int) -> Range<Int>? {
-        guard line >= 1, line <= lineStarts.count else { return nil }
-        let end = line < lineStarts.count ? lineStarts[line] : processedText.utf8.count
-        return lineStarts[line - 1]..<end
-    }
 
     /// A 1-based line and 1-based UTF-8 column as an offset into `processedText`.
     func offset(of location: SourceLocation) -> Int? {
