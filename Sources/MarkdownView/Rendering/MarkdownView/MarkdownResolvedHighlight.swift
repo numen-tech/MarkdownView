@@ -59,6 +59,7 @@ struct MarkdownResolvedHighlight: Hashable, Sendable {
         guard !plainText.isEmpty, let reported = byteRange(of: nodeRange), reported.overlaps(range)
         else { return nil }
         guard let nodeBytes = verbatim(plainText, in: reported) else {
+            if let range = smartPunctuationRange(in: plainText, reported: reported) { return range }
             return plainText.startIndex..<plainText.endIndex
         }
         let lower = max(nodeBytes.lowerBound, range.lowerBound)
@@ -72,6 +73,56 @@ struct MarkdownResolvedHighlight: Hashable, Sendable {
         )
         return start < end ? start..<end : nil
     }
+
+    /// The part of `plainText` the span covers when the node differs from its source only by
+    /// cmark's smart punctuation (`'` and `"` curled, `--` and `---` as dashes, `...` as an
+    /// ellipsis), which is on in `MarkdownView`'s parse: each character is matched to the source
+    /// bytes it came from, so a sentence in a paragraph with an apostrophe is still exact instead of
+    /// the whole node. Nil when the node differs in any other way (escapes, entities, a column
+    /// cmark misreports): the caller takes the whole node.
+    func smartPunctuationRange(in plainText: String, reported: Range<Int>) -> Range<String.Index>? {
+        let utf8 = processedText.utf8
+        guard reported.upperBound <= utf8.count else { return nil }
+        let source = Array(utf8[utf8.index(utf8.startIndex, offsetBy: reported.lowerBound)..<utf8.index(utf8.startIndex, offsetBy: reported.upperBound)])
+        var cursor = 0
+        var first: String.Index?
+        var last: String.Index?
+        for index in plainText.indices {
+            let character = plainText[index]
+            let start = reported.lowerBound + cursor
+            let literal = Array(String(character).utf8)
+            var matched: Int?
+            if source.count - cursor >= literal.count, source[cursor..<(cursor + literal.count)].elementsEqual(literal) {
+                matched = literal.count
+            } else if let candidates = Self.smartPunctuation[character] {
+                matched = candidates.first { candidate in
+                    source.count - cursor >= candidate.count
+                        && source[cursor..<(cursor + candidate.count)].elementsEqual(candidate)
+                }?.count
+            }
+            guard let matched else { return nil }
+            cursor += matched
+            if start < range.upperBound, reported.lowerBound + cursor > range.lowerBound {
+                if first == nil { first = index }
+                last = plainText.index(after: index)
+            }
+        }
+        // Only a hard break's trailing spaces may follow the text.
+        guard source[cursor...].allSatisfy({ $0 == UInt8(ascii: " ") || $0 == UInt8(ascii: "\t") }) else { return nil }
+        guard let first, let last, first < last else { return nil }
+        return first..<last
+    }
+
+    /// What cmark's smart punctuation writes for the ASCII it replaces.
+    private static let smartPunctuation: [Character: [[UInt8]]] = [
+        "\u{2018}": [Array("'".utf8)],
+        "\u{2019}": [Array("'".utf8)],
+        "\u{201C}": [Array("\"".utf8)],
+        "\u{201D}": [Array("\"".utf8)],
+        "\u{2013}": [Array("--".utf8)],
+        "\u{2014}": [Array("---".utf8)],
+        "\u{2026}": [Array("...".utf8)],
+    ]
 
     /// The bytes of `reported` that hold `plainText`: all of them when they are the text, or
     /// their start when only spaces and tabs follow it (cmark's range of the text before a hard

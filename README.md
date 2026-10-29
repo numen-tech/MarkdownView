@@ -24,6 +24,8 @@ MarkdownView(reply)
 - Text runs inside the span get `color` as their background, across emphasis, links and soft line
   breaks. The span is mapped through the view's math preprocessing, so `$…$` earlier on a line
   does not shift it; a bound inside a formula snaps to the formula's edge.
+- Smart punctuation (cmark curls `'` and `"` and turns `--`, `---` and `...` into dashes and an
+  ellipsis) keeps the highlight exact: each character is matched to the source bytes it came from.
 - A text node whose source holds escapes or entities, an inline code span and an inline formula
   that the span touches are highlighted whole. Code blocks, display math and images never are.
 - Known limitation: cmark misreports the columns of a lazy block-quote continuation line

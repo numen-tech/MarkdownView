@@ -105,6 +105,32 @@ struct MarkdownHighlightedSpanTests {
         #expect(runs == ["Use *stars* here. And plain."])
     }
 
+    @Test("Smart punctuation keeps the highlight exact", .tags(.rendering))
+    func smartPunctuation() throws {
+        // cmark curls `'` and `"` and turns `--`, `---` and `...` into dashes and an ellipsis, so the
+        // node's text is not its source bytes; the mapping follows those substitutions, so a sentence
+        // in a paragraph full of apostrophes is not a whole-paragraph highlight (Read Aloud, #939).
+        let markdown = "It's fine. Earth's nights are \"dark\" -- really... Next one --- ok."
+        let span = Self.bytes(of: "Earth's nights are \"dark\" -- really...", in: markdown)
+        #expect(try highlightedRuns(markdown, span: span) == ["Earth\u{2019}s nights are \u{201C}dark\u{201D} \u{2013} really\u{2026}"])
+        let last = Self.bytes(of: "Next one --- ok.", in: markdown)
+        #expect(try highlightedRuns(markdown, span: last) == ["Next one \u{2014} ok."])
+        let first = Self.bytes(of: "It's fine.", in: markdown)
+        #expect(try highlightedRuns(markdown, span: first) == ["It\u{2019}s fine."])
+    }
+
+    @Test("A literal curly apostrophe in the source stays exact", .tags(.rendering))
+    func literalCurlyApostrophe() throws {
+        let markdown = "Earth\u{2019}s nights. Next one."
+        #expect(try highlightedRuns(markdown, span: Self.bytes(of: "Next one.", in: markdown)) == ["Next one."])
+    }
+
+    @Test("Smart punctuation next to an entity still falls back to the whole node", .tags(.rendering))
+    func smartPunctuationWithEntityFallsBack() throws {
+        let markdown = "It's &amp; more. Next."
+        #expect(try highlightedRuns(markdown, span: Self.bytes(of: "Next.", in: markdown)) == ["It\u{2019}s & more. Next."])
+    }
+
     @Test("A text node before a hard break maps exactly despite its trailing spaces", .tags(.rendering))
     func hardBreak() throws {
         // cmark's range covers "Line one  "; the text "Line one" still sits at its start.
