@@ -20,20 +20,21 @@ enum CodeHighlighter {
     static func attributedString(
         for code: String,
         language: String?,
-        theme: String
+        theme: String,
+        renderer: (String, String?, String) -> AttributedString? = CodeHighlighter.render
     ) -> AttributedString? {
         // A block that has only just opened (its fence is still arriving) has nothing to colour.
         guard !code.isEmpty else { return nil }
         let key = Key(code: code, language: language, theme: theme)
         if let hit = cache.object(forKey: key) { return hit.value }
-        guard let value = autoreleasepool(invoking: { render(code: code, language: language, theme: theme) }) else {
+        guard let value = autoreleasepool(invoking: { renderer(code, language, theme) }) else {
             return nil
         }
         cache.setObject(Entry(value), forKey: key, cost: code.utf8.count)
         return value
     }
 
-    private static func render(code: String, language: String?, theme: String) -> AttributedString? {
+    private static func render(_ code: String, _ language: String?, _ theme: String) -> AttributedString? {
         guard let highlightr = Highlightr(), highlightr.setTheme(to: theme) else { return nil }
         // Streamed code is often cut mid-token. At the default (`false`) highlight.js returns the
         // whole block uncoloured for one illegal token, such as an unterminated Python string.
@@ -59,9 +60,11 @@ enum CodeHighlighter {
             self.theme = theme
         }
 
+        // `String` equality is canonical equivalence (`é` equals `e` + U+0301), but the two are
+        // different source text, so the code is compared and hashed by its UTF-8 bytes.
         override var hash: Int {
             var hasher = Hasher()
-            hasher.combine(code)
+            for byte in code.utf8 { hasher.combine(byte) }
             hasher.combine(language)
             hasher.combine(theme)
             return hasher.finalize()
@@ -69,7 +72,7 @@ enum CodeHighlighter {
 
         override func isEqual(_ object: Any?) -> Bool {
             guard let other = object as? Key else { return false }
-            return code == other.code && language == other.language && theme == other.theme
+            return code.utf8.elementsEqual(other.code.utf8) && language == other.language && theme == other.theme
         }
     }
 

@@ -160,6 +160,7 @@ fileprivate struct DefaultMarkdownCodeBlock: View {
         #if canImport(Highlightr)
         try Task.checkCancellation()
         let themeName = await theme.themeName(for: colorScheme)
+        try Task.checkCancellation()
         guard let attributedCode = CodeHighlighter.attributedString(
             for: codeBlockConfiguration.code,
             language: CodeFenceLanguage.name(fromInfo: codeBlockConfiguration.language),

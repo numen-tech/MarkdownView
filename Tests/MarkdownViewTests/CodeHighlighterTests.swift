@@ -111,14 +111,45 @@ struct CodeHighlighterTests {
 
     // MARK: Cache
 
-    @Test("The same block is highlighted once and served from the cache after")
-    func cachedResultIsEqual() throws {
-        let code = "let x = 1\nlet y = x + 1\n"
-        let first = try #require(CodeHighlighter.attributedString(for: code, language: "swift", theme: "xcode"))
-        let second = try #require(CodeHighlighter.attributedString(for: code, language: "swift", theme: "xcode"))
-        let otherTheme = try #require(CodeHighlighter.attributedString(for: code, language: "swift", theme: "dark"))
+    private final class RenderCounter {
+        var count = 0
+        func render(_ code: String, _: String?, _ theme: String) -> AttributedString? {
+            count += 1
+            return AttributedString("\(theme):\(code)")
+        }
+    }
+
+    @Test("The same block is rendered once and served from the cache after")
+    func sameBlockRendersOnce() throws {
+        let code = "let cached = \(UUID())\n"
+        let counter = RenderCounter()
+        let first = try #require(
+            CodeHighlighter.attributedString(for: code, language: "swift", theme: "xcode", renderer: counter.render))
+        let second = try #require(
+            CodeHighlighter.attributedString(for: code, language: "swift", theme: "xcode", renderer: counter.render))
         #expect(first == second)
-        #expect(first != otherTheme)
+        #expect(counter.count == 1)
+        // Another theme or language is another entry.
+        _ = CodeHighlighter.attributedString(for: code, language: "swift", theme: "dark", renderer: counter.render)
+        _ = CodeHighlighter.attributedString(for: code, language: nil, theme: "xcode", renderer: counter.render)
+        #expect(counter.count == 3)
+    }
+
+    @Test("Text that differs only in Unicode normalization is not served from the other's entry")
+    func canonicallyEquivalentCodeIsNotConflated() throws {
+        let tag = UUID().uuidString
+        let composed = "\"caf\u{00E9}\" // \(tag)\n"
+        let decomposed = "\"cafe\u{0301}\" // \(tag)\n"
+        #expect(composed == decomposed)  // Swift treats these as equal strings
+        #expect(!composed.utf8.elementsEqual(decomposed.utf8))
+        let counter = RenderCounter()
+        let a = try #require(
+            CodeHighlighter.attributedString(for: composed, language: "swift", theme: "xcode", renderer: counter.render))
+        let b = try #require(
+            CodeHighlighter.attributedString(for: decomposed, language: "swift", theme: "xcode", renderer: counter.render))
+        #expect(counter.count == 2)
+        #expect(String(a.characters).utf8.elementsEqual("xcode:\(composed)".utf8))
+        #expect(String(b.characters).utf8.elementsEqual("xcode:\(decomposed)".utf8))
     }
 }
 #endif
