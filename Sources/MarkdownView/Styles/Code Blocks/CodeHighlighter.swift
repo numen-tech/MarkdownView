@@ -21,20 +21,26 @@ enum CodeHighlighter {
         for code: String,
         language: String?,
         theme: String,
-        renderer: (String, String?, String) -> AttributedString? = CodeHighlighter.render
+        colorOverrides: [CodeHighlighterColorOverride] = [],
+        renderer: (String, String?, String, [CodeHighlighterColorOverride]) -> AttributedString? = CodeHighlighter.render
     ) -> AttributedString? {
         // A block that has only just opened (its fence is still arriving) has nothing to colour.
         guard !code.isEmpty else { return nil }
-        let key = Key(code: code, language: language, theme: theme)
+        let key = Key(code: code, language: language, theme: theme, colorOverrides: colorOverrides)
         if let hit = cache.object(forKey: key) { return hit.value }
-        guard let value = autoreleasepool(invoking: { renderer(code, language, theme) }) else {
+        guard let value = autoreleasepool(invoking: { renderer(code, language, theme, colorOverrides) }) else {
             return nil
         }
         cache.setObject(Entry(value), forKey: key, cost: code.utf8.count)
         return value
     }
 
-    private static func render(_ code: String, _ language: String?, _ theme: String) -> AttributedString? {
+    private static func render(
+        _ code: String,
+        _ language: String?,
+        _ theme: String,
+        _ colorOverrides: [CodeHighlighterColorOverride]
+    ) -> AttributedString? {
         guard let highlightr = Highlightr(), highlightr.setTheme(to: theme) else { return nil }
         // Streamed code is often cut mid-token. At the default (`false`) highlight.js returns the
         // whole block uncoloured for one illegal token, such as an unterminated Python string.
@@ -43,8 +49,27 @@ enum CodeHighlighter {
         // does not know falls back to auto-detection inside Highlightr.
         guard let highlighted = highlightr.highlight(code, as: language) else { return nil }
         let attributed = NSMutableAttributedString(attributedString: highlighted)
-        attributed.removeAttribute(.font, range: NSRange(location: 0, length: attributed.length))
+        let whole = NSRange(location: 0, length: attributed.length)
+        attributed.removeAttribute(.font, range: whole)
+        recolor(attributed, colorOverrides)
         return AttributedString(attributed)
+    }
+
+    /// Redraws each foreground colour an override names; the other runs keep the theme's colour.
+    static func recolor(_ attributed: NSMutableAttributedString, _ colorOverrides: [CodeHighlighterColorOverride]) {
+        guard !colorOverrides.isEmpty else { return }
+        let whole = NSRange(location: 0, length: attributed.length)
+        var replacements: [(NSRange, RPColor)] = []
+        attributed.enumerateAttribute(.foregroundColor, in: whole) { value, range, _ in
+            guard let color = value as? RPColor,
+                  let replacement = CodeHighlighterColorOverride.replacement(for: color.cgColor, in: colorOverrides),
+                  let drawn = RPColor(cgColor: replacement)
+            else { return }
+            replacements.append((range, drawn))
+        }
+        for (range, color) in replacements {
+            attributed.addAttribute(.foregroundColor, value: color, range: range)
+        }
     }
 
     // MARK: Cache
@@ -53,11 +78,13 @@ enum CodeHighlighter {
         let code: String
         let language: String?
         let theme: String
+        let colorOverrides: [CodeHighlighterColorOverride]
 
-        init(code: String, language: String?, theme: String) {
+        init(code: String, language: String?, theme: String, colorOverrides: [CodeHighlighterColorOverride]) {
             self.code = code
             self.language = language
             self.theme = theme
+            self.colorOverrides = colorOverrides
         }
 
         // `String` equality is canonical equivalence (`é` equals `e` + U+0301), but the two are
@@ -67,12 +94,14 @@ enum CodeHighlighter {
             for byte in code.utf8 { hasher.combine(byte) }
             hasher.combine(language)
             hasher.combine(theme)
+            hasher.combine(colorOverrides)
             return hasher.finalize()
         }
 
         override func isEqual(_ object: Any?) -> Bool {
             guard let other = object as? Key else { return false }
             return code.utf8.elementsEqual(other.code.utf8) && language == other.language && theme == other.theme
+                && colorOverrides == other.colorOverrides
         }
     }
 

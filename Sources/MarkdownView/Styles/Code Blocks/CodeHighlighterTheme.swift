@@ -14,6 +14,8 @@ import SwiftUI
 public struct CodeHighlighterTheme: Hashable, Sendable {
     var lightModeThemeName: String
     var darkModeThemeName: String
+    var lightModeColorOverrides: [CodeHighlighterColorOverride] = []
+    var darkModeColorOverrides: [CodeHighlighterColorOverride] = []
     
     /// Creates a single theme for both light and dark mode.
     ///
@@ -37,6 +39,25 @@ public struct CodeHighlighterTheme: Hashable, Sendable {
         self.lightModeThemeName = lightModeThemeName
         self.darkModeThemeName = darkModeThemeName
     }
+
+    /// Creates a combination of two themes, each with colours drawn as others.
+    ///
+    /// - Parameters:
+    ///   - lightModeThemeName: the name of the theme to use in Light Mode.
+    ///   - darkModeThemeName: the name of the theme to use in Dark Mode.
+    ///   - lightModeColorOverrides: colours of the Light Mode theme drawn as others.
+    ///   - darkModeColorOverrides: colours of the Dark Mode theme drawn as others.
+    public init(
+        lightModeThemeName: String,
+        darkModeThemeName: String,
+        lightModeColorOverrides: [CodeHighlighterColorOverride],
+        darkModeColorOverrides: [CodeHighlighterColorOverride]
+    ) {
+        self.lightModeThemeName = lightModeThemeName
+        self.darkModeThemeName = darkModeThemeName
+        self.lightModeColorOverrides = lightModeColorOverrides
+        self.darkModeColorOverrides = darkModeColorOverrides
+    }
     
     func themeName(for colorScheme: ColorScheme) -> String {
         switch colorScheme {
@@ -46,6 +67,17 @@ public struct CodeHighlighterTheme: Hashable, Sendable {
             darkModeThemeName
         @unknown default:
             lightModeThemeName
+        }
+    }
+
+    func colorOverrides(for colorScheme: ColorScheme) -> [CodeHighlighterColorOverride] {
+        switch colorScheme {
+        case .light:
+            lightModeColorOverrides
+        case .dark:
+            darkModeColorOverrides
+        @unknown default:
+            lightModeColorOverrides
         }
     }
 }
