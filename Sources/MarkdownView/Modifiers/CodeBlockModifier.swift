@@ -27,11 +27,9 @@ extension View {
     /// - Parameter theme: The theme for highlighter.
     @available(*, deprecated, message: "Use `.markdownCodeBlockStyle(.default(lightTheme:darkTheme:))` instead.")
     nonisolated public func codeHighlighterTheme(_ theme: CodeHighlighterTheme) -> some View {
+        // The whole theme, so its colour overrides are kept with the theme names.
         let style = MainActor.assumeIsolated {
-            DefaultCodeBlockStyle.default(
-                lightTheme: theme.lightModeThemeName,
-                darkTheme: theme.darkModeThemeName
-            )
+            DefaultCodeBlockStyle(highlighterTheme: theme)
         }
         return codeBlockStyle(style)
     }

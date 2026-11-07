@@ -11,6 +11,7 @@ import Testing
 
 #if os(macOS)
 import AppKit
+import SwiftUI
 #endif
 
 #if os(iOS) || os(macOS)
@@ -200,6 +201,41 @@ struct CodeHighlighterTests {
     }
 
     #if os(macOS)
+    private struct CodeBlockStyleProbe: View {
+        @Environment(\.codeBlockStyle) private var style
+        let sink: (any MarkdownCodeBlockStyle) -> Void
+
+        var body: some View {
+            sink(style)
+            return Color.clear.frame(width: 1, height: 1)
+        }
+    }
+
+    @available(*, deprecated, message: "Exercises the deprecated `.codeHighlighterTheme(_:)` modifier.")
+    @MainActor
+    private static func styleThroughDeprecatedThemeModifier(_ theme: CodeHighlighterTheme) -> (any MarkdownCodeBlockStyle)? {
+        var seen: (any MarkdownCodeBlockStyle)?
+        let renderer = ImageRenderer(content: CodeBlockStyleProbe { seen = $0 }.codeHighlighterTheme(theme))
+        _ = renderer.nsImage
+        return seen
+    }
+
+    @available(*, deprecated, message: "Exercises the deprecated `.codeHighlighterTheme(_:)` modifier.")
+    @Test("The deprecated theme modifier keeps a theme's colour overrides")
+    @MainActor
+    func themeModifierKeepsOverrides() throws {
+        let theme = CodeHighlighterTheme(
+            lightModeThemeName: "xcode",
+            darkModeThemeName: "xcode-dark",
+            lightModeColorOverrides: [CodeHighlighterColorOverride(0x000000, to: 0x111111)],
+            darkModeColorOverrides: [CodeHighlighterColorOverride(0x6C7986, to: 0x8C98A5)]
+        )
+        let style = try #require(Self.styleThroughDeprecatedThemeModifier(theme) as? DefaultCodeBlockStyle)
+        #expect(style.highlighterTheme == theme)
+        #expect(style.highlighterTheme.colorOverrides(for: .dark) == theme.darkModeColorOverrides)
+        #expect(style.highlighterTheme.colorOverrides(for: .light) == theme.lightModeColorOverrides)
+    }
+
     private static func foregroundColors(_ string: AttributedString) -> [String: UInt32] {
         var colors: [String: UInt32] = [:]
         for run in string.runs {
