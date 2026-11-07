@@ -48,6 +48,24 @@ extension MarkdownCodeBlockStyle where Self == DefaultCodeBlockStyle {
             )
         )
     }
+
+    /// Default code block theme with customized light & dark themes, each with colours drawn as
+    /// others (see ``CodeHighlighterColorOverride``).
+    static public func `default`(
+        lightTheme: String = "xcode",
+        darkTheme: String = "dark",
+        lightColorOverrides: [CodeHighlighterColorOverride] = [],
+        darkColorOverrides: [CodeHighlighterColorOverride]
+    ) -> DefaultCodeBlockStyle {
+        .init(
+            highlighterTheme: CodeHighlighterTheme(
+                lightModeThemeName: lightTheme,
+                darkModeThemeName: darkTheme,
+                lightModeColorOverrides: lightColorOverrides,
+                darkModeColorOverrides: darkColorOverrides
+            )
+        )
+    }
 }
 
 fileprivate struct DefaultMarkdownCodeBlock: View {
@@ -159,12 +177,13 @@ fileprivate struct DefaultMarkdownCodeBlock: View {
     nonisolated private func highlight() async throws {
         #if canImport(Highlightr)
         try Task.checkCancellation()
-        let themeName = await theme.themeName(for: colorScheme)
+        let (themeName, colorOverrides) = await (theme.themeName(for: colorScheme), theme.colorOverrides(for: colorScheme))
         try Task.checkCancellation()
         guard let attributedCode = CodeHighlighter.attributedString(
             for: codeBlockConfiguration.code,
             language: CodeFenceLanguage.name(fromInfo: codeBlockConfiguration.language),
-            theme: themeName
+            theme: themeName,
+            colorOverrides: colorOverrides
         ) else { return }
         
         try await MainActor.run {
