@@ -7,10 +7,6 @@
 
 import SwiftUI
 
-#if canImport(Highlightr)
-@preconcurrency import Highlightr
-#endif
-
 /// Default code block style that applies to a MarkdownView.
 public struct DefaultCodeBlockStyle: MarkdownCodeBlockStyle {
     /// Theme configuration in the current context.
@@ -163,25 +159,16 @@ fileprivate struct DefaultMarkdownCodeBlock: View {
     nonisolated private func highlight() async throws {
         #if canImport(Highlightr)
         try Task.checkCancellation()
-        let highlightr = Highlightr()!
-        await highlightr.setTheme(to: theme.themeName(for: colorScheme))
-        
-        let specifiedLanguage = codeBlockConfiguration.language?.lowercased() ?? ""
-        let language = highlightr.supportedLanguages()
-            .first(where: { $0.localizedCaseInsensitiveCompare(specifiedLanguage) == .orderedSame })
-        
-        try Task.checkCancellation()
-        
-        let code = codeBlockConfiguration.code
-        guard let highlightedCode = highlightr.highlight(code, as: language) else { return }
-        let attributedCode = NSMutableAttributedString(
-            attributedString: highlightedCode
-        )
-        attributedCode.removeAttribute(.font, range: NSMakeRange(0, attributedCode.length))
+        let themeName = await theme.themeName(for: colorScheme)
+        guard let attributedCode = CodeHighlighter.attributedString(
+            for: codeBlockConfiguration.code,
+            language: CodeFenceLanguage.name(fromInfo: codeBlockConfiguration.language),
+            theme: themeName
+        ) else { return }
         
         try await MainActor.run {
             try Task.checkCancellation()
-            self.attributedCode = AttributedString(attributedCode)
+            self.attributedCode = attributedCode
         }
         #endif
     }
