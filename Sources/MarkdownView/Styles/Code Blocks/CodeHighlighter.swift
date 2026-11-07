@@ -4,6 +4,7 @@
 //
 
 #if canImport(Highlightr)
+import CoreGraphics
 import Foundation
 @preconcurrency import Highlightr
 
@@ -63,13 +64,18 @@ enum CodeHighlighter {
         attributed.enumerateAttribute(.foregroundColor, in: whole) { value, range, _ in
             guard let color = value as? RPColor,
                   let replacement = CodeHighlighterColorOverride.replacement(for: color.cgColor, in: colorOverrides),
-                  let drawn = RPColor(cgColor: replacement)
+                  let drawn = platformColor(replacement)
             else { return }
             replacements.append((range, drawn))
         }
         for (range, color) in replacements {
             attributed.addAttribute(.foregroundColor, value: color, range: range)
         }
+    }
+
+    /// `NSColor(cgColor:)` is failable and `UIColor(cgColor:)` is not; the optional return takes both.
+    private static func platformColor(_ color: CGColor) -> RPColor? {
+        RPColor(cgColor: color)
     }
 
     // MARK: Cache
