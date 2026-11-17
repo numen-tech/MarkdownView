@@ -237,20 +237,8 @@ fileprivate struct DefaultMarkdownCodeBlock: View {
         .padding(.horizontal, -4)
     }
     
-    private var copyCodeButtonTextTransition: AnyTransition {
-        if #available(iOS 17.0, macOS 14.0, tvOS 17.0, watchOS 10.0, *) {
-            AnyTransition(.blurReplace)
-        } else {
-            AnyTransition.opacity
-        }
-    }
-    
     private var copyCodeButtonIconTransition: AnyTransition {
-        if #available(iOS 26.0, macOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
-            AnyTransition(.symbolEffect(.drawOn).combined(with: .blurReplace))
-        } else {
-            copyCodeButtonTextTransition
-        }
+        AnyTransition(.symbolEffect(.drawOn).combined(with: .blurReplace))
     }
 }
 
