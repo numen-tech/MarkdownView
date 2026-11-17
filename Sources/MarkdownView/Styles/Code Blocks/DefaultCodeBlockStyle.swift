@@ -96,6 +96,10 @@ fileprivate struct DefaultMarkdownCodeBlock: View {
             .textSelection(.enabled)
             #endif
         }
+        // Code is left-to-right in any UI. Under a right-to-left layout a horizontal ScrollView
+        // opens scrolled to the end of its lines and right-aligns short code, and on iOS a
+        // multi-line block that overflows crashed with NaN layer bounds (numen-tech/gemma4-qat#1746).
+        .environment(\.layoutDirection, .leftToRight)
         .task(id: codeHighlightingConfiguration, immediateHighlight)
         .onValueChange(codeBlockConfiguration) {
             debouncedHighlight()

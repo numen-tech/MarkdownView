@@ -23,6 +23,8 @@ struct MarkdownDisplayMathView: View {
             ScrollView(.horizontal) {
                 latex
             }
+            // LaTeX reads left to right in any UI (numen-tech/gemma4-qat#1746).
+            .environment(\.layoutDirection, .leftToRight)
         }
     }
     
