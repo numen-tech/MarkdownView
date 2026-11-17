@@ -32,6 +32,9 @@ struct InlineMath: View {
                     textAlignment: .left
                 )
             }
+            // LaTeX reads left to right in any UI: keep the overflow scroll at its start under a
+            // right-to-left layout, as the code block does (numen-tech/gemma4-qat#1746).
+            .environment(\.layoutDirection, .leftToRight)
         }
     }
 }
