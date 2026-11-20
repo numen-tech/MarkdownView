@@ -91,9 +91,17 @@ public enum MarkdownContentDirection {
     /// The direction of a block: its first strong character outside inline code, math, HTML,
     /// images and bare links (a URL written as its own label), or nil when it has none.
     static func of(_ markup: any Markup, skipsMath: Bool) -> LayoutDirection? {
+        var isolates = 0
+        return of(markup, skipsMath: skipsMath, isolates: &isolates)
+    }
+
+    /// `isolates` is the isolate depth open at `markup`: it carries across the inline nodes of
+    /// one block (`\u{2067}**مرحبا**\u{2069} hello` reads left to right), and each block starts
+    /// at zero, as a paragraph ends every isolate.
+    private static func of(_ markup: any Markup, skipsMath: Bool, isolates: inout Int) -> LayoutDirection? {
         switch markup {
         case let text as Markdown.Text:
-            return firstStrong(inText: text.string, skipsMath: skipsMath)
+            return firstStrong(inText: text.string, skipsMath: skipsMath, isolates: &isolates)
         case is InlineCode, is CodeBlock, is InlineHTML, is HTMLBlock, is Markdown.Image, is SymbolLink:
             return nil
         case let link as Markdown.Link:
@@ -102,7 +110,8 @@ public enum MarkdownContentDirection {
             break
         }
         for child in markup.children {
-            if let direction = of(child, skipsMath: skipsMath) { return direction }
+            if child is any BlockMarkup { isolates = 0 }
+            if let direction = of(child, skipsMath: skipsMath, isolates: &isolates) { return direction }
         }
         return nil
     }
@@ -111,16 +120,20 @@ public enum MarkdownContentDirection {
     /// placeholders and `$...$`-style spans: a formula's letters are not prose) and past bare URLs,
     /// which the display isolates as autolinks are.
     static func firstStrong(inText text: String, skipsMath: Bool) -> LayoutDirection? {
+        var isolates = 0
+        return firstStrong(inText: text, skipsMath: skipsMath, isolates: &isolates)
+    }
+
+    /// The same, starting at isolate depth `isolates` and leaving it at the depth after `text`.
+    static func firstStrong(inText text: String, skipsMath: Bool, isolates: inout Int) -> LayoutDirection? {
         var skipped = MarkdownBidiIsolation.urlRanges(in: text)
         if skipsMath, text.contains(where: { $0 == "$" || $0 == "\\" || $0 == "(" }) {
             skipped += MarkdownMathPreprocessor.placeholderSegments(in: text).map(\.range)
                 + MathParser(text: text).mathRepresentations.map(\.range)
         }
-        guard !skipped.isEmpty else { return firstStrong(in: text) }
         // One scan, so an isolate's depth carries across a skipped range.
         let sorted = skipped.sorted { $0.lowerBound < $1.lowerBound }
         var next = 0
-        var isolates = 0
         var index = text.unicodeScalars.startIndex
         while index < text.unicodeScalars.endIndex {
             while next < sorted.count, sorted[next].upperBound <= index { next += 1 }

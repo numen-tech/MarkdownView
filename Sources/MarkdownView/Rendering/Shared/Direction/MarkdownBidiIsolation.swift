@@ -29,18 +29,14 @@ enum MarkdownBidiIsolation {
         // Character offsets of the runs to isolate: the renderer's (inline code, autolinks), then
         // URLs and grouped numbers found in the text. A found URL that overlaps a rendered run is
         // dropped (the parser's link boundary wins); a number joins an inline-code group in it.
-        var tagged: [Range<Int>] = []
-        for (value, range) in text.runs[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self]
-        where value == true {
-            let lower = text.characters.distance(from: text.startIndex, to: range.lowerBound)
-            let upper = text.characters.distance(from: text.startIndex, to: range.upperBound)
-            tagged.append(lower..<upper)
-        }
+        let taggedRanges = text.runs[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self]
+            .filter { $0.0 == true }.map(\.1)
+        var tagged = characterOffsets(of: taggedRanges, in: text.characters)
         tagged.sort { $0.lowerBound < $1.lowerBound }
         var spans = tagged
         var next = 0
-        for run in leftToRightRuns(in: string) {
-            let span = string.distance(from: string.startIndex, to: run.range.lowerBound)..<string.distance(from: string.startIndex, to: run.range.upperBound)
+        let runs = leftToRightRuns(in: string).sorted { $0.range.lowerBound < $1.range.lowerBound }
+        for (run, span) in zip(runs, characterOffsets(of: runs.map(\.range), in: string)) {
             if run.isURL {
                 // Found runs come in order, so one cursor walks the tagged ones.
                 while next < tagged.count, tagged[next].upperBound <= span.lowerBound { next += 1 }
@@ -80,6 +76,23 @@ enum MarkdownBidiIsolation {
         }
         result += text[index...]
         return result
+    }
+
+    /// The character offsets of `ranges` in `collection`, found in one forward walk over its
+    /// bounds. A distance from the start for each range would make a long reply with many runs
+    /// quadratic, on the main actor, on every streaming update.
+    static func characterOffsets<C: Collection>(of ranges: [Range<C.Index>], in collection: C) -> [Range<Int>] {
+        let bounds = ranges.flatMap { [$0.lowerBound, $0.upperBound] }
+        let order = bounds.indices.sorted { bounds[$0] < bounds[$1] }
+        var offsets = [Int](repeating: 0, count: bounds.count)
+        var index = collection.startIndex
+        var offset = 0
+        for slot in order {
+            offset += collection.distance(from: index, to: bounds[slot])
+            index = bounds[slot]
+            offsets[slot] = offset
+        }
+        return ranges.indices.map { offsets[2 * $0]..<offsets[2 * $0 + 1] }
     }
 
     /// The URLs, dates and grouped numbers in `string`, which read left to right as units. A

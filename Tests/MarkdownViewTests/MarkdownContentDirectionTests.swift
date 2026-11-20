@@ -114,6 +114,8 @@ struct MarkdownContentDirectionTests {
         #expect(inline.contentType == .text)
     }
 
+    // The scan counter is a DEBUG-only seam, so a Release test build compiles without this test.
+    #if DEBUG
     @Test("A table's cells take its resolved direction instead of rescanning it", .tags(.rendering))
     func tableDirectionOncePerTable() throws {
         let rows = (1...40).map { "| \($0) | \($0 * 7) | \($0 * 13) |" }.joined(separator: "\n")
@@ -128,6 +130,33 @@ struct MarkdownContentDirectionTests {
         var lone = MarkdownViewRenderer(configuration: MarkdownRendererConfiguration(), mathContext: nil, elementRenderers: [])
         _ = lone.visit(cell)
         #expect(MarkdownViewRenderer.tableDirectionScans == before + 1)
+    }
+    #endif
+
+    @Test("Isolate depth carries across inline markup within a block, and resets per block", .tags(.rendering), arguments: [
+        ("\u{2067}**مرحبا**\u{2069} hello", LayoutDirection.leftToRight),
+        ("\u{2067}*مرحبا* [رابط](https://x.org)\u{2069} hello", .leftToRight),
+        ("**مرحبا** hello", .rightToLeft),
+        ("\u{2067}**abc**\u{2069} مرحبا", .rightToLeft),
+    ])
+    func depthAcrossInline(markdown: String, expected: LayoutDirection) throws {
+        let block = try #require(document(markdown).child(at: 0))
+        #expect(MarkdownContentDirection.of(block, skipsMath: false) == expected)
+    }
+
+    @Test("An isolate left open in one block does not reach the next", .tags(.rendering))
+    func depthResetsPerBlock() throws {
+        let quote = try #require(document("> \u{2067}abc\n>\n> مرحبا").child(at: 0))
+        #expect(MarkdownContentDirection.of(quote, skipsMath: false) == .rightToLeft)
+    }
+
+    @Test("Character offsets of unordered, overlapping ranges in one walk", .tags(.rendering))
+    func characterOffsetsCursor() {
+        let string = "ab👍🏽cd https://x.org 2026-11-17"
+        let ranges = [string.range(of: "2026-11-17")!, string.range(of: "cd")!, string.range(of: "b👍🏽c")!]
+        let offsets = MarkdownBidiIsolation.characterOffsets(of: ranges, in: string)
+        let expected = ranges.map { string.distance(from: string.startIndex, to: $0.lowerBound)..<string.distance(from: string.startIndex, to: $0.upperBound) }
+        #expect(offsets == expected)
     }
 
     // MARK: Isolates
