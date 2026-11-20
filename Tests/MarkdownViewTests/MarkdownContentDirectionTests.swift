@@ -156,6 +156,20 @@ struct MarkdownContentDirectionTests {
         #expect(MarkdownContentDirection.firstStrong(in: "\u{2067}abc\u{2029}مرحبا") == .rightToLeft)
     }
 
+    @Test("A paragraph separator inside skipped inline code or after a bare URL ends an isolate", .tags(.rendering))
+    func separatorInSkippedText() throws {
+        let code = try #require(document("\u{2067}abc `x\u{2029}y` שלום").child(at: 0))
+        #expect(MarkdownContentDirection.of(code, skipsMath: false) == .rightToLeft)
+        let url = try #require(document("\u{2067}abc https://x.org/a\u{001C}שלום").child(at: 0))
+        #expect(MarkdownContentDirection.of(url, skipsMath: false) == .rightToLeft)
+        let found = MarkdownBidiIsolation.urlRanges(in: "https://x.org/a\u{2029}b")
+        #expect(found.map { "https://x.org/a\u{2029}b"[$0] } == ["https://x.org/a"])
+        // Renderer level: the paragraph node takes the right-to-left direction.
+        var renderer = MarkdownViewRenderer(configuration: MarkdownRendererConfiguration(), mathContext: nil, elementRenderers: [])
+        #expect(renderer.visit(code).direction == .rightToLeft)
+        #expect(renderer.visit(url).direction == .rightToLeft)
+    }
+
     @Test("An isolate left open in one block does not reach the next", .tags(.rendering))
     func depthResetsPerBlock() throws {
         let quote = try #require(document("> \u{2067}abc\n>\n> مرحبا").child(at: 0))

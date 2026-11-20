@@ -104,9 +104,14 @@ public enum MarkdownContentDirection {
         case let text as Markdown.Text:
             return firstStrong(inText: text.string, skipsMath: skipsMath, isolates: &isolates)
         case is InlineCode, is CodeBlock, is InlineHTML, is HTMLBlock, is Markdown.Image, is SymbolLink:
+            // Skipped for direction, but a paragraph separator shown in it still ends every isolate.
+            if containsParagraphSeparator(skippedText(of: markup)) { isolates = 0 }
             return nil
         case let link as Markdown.Link:
-            if isAutolink(link) { return nil }
+            if isAutolink(link) {
+                if containsParagraphSeparator(link.plainText) { isolates = 0 }
+                return nil
+            }
         default:
             break
         }
@@ -117,6 +122,27 @@ public enum MarkdownContentDirection {
             if let direction = of(child, skipsMath: skipsMath, isolates: &isolates) { return direction }
         }
         return nil
+    }
+
+    /// The text a skipped node shows.
+    private static func skippedText(of markup: any Markup) -> String {
+        switch markup {
+        case let code as InlineCode: return code.code
+        case let html as InlineHTML: return html.rawHTML
+        default: return ""
+        }
+    }
+
+    /// A paragraph separator (bidi class B), which ends every isolate open before it.
+    static func isParagraphSeparator(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x000A, 0x000D, 0x001C...0x001E, 0x0085, 0x2029: return true
+        default: return false
+        }
+    }
+
+    static func containsParagraphSeparator(_ text: some StringProtocol) -> Bool {
+        text.unicodeScalars.contains(where: isParagraphSeparator)
     }
 
     /// The first strong character of a text node's string, past any math in it (the parser's
@@ -141,6 +167,8 @@ public enum MarkdownContentDirection {
         while index < text.unicodeScalars.endIndex {
             while next < sorted.count, sorted[next].upperBound <= index { next += 1 }
             if next < sorted.count, sorted[next].contains(index) {
+                // A skipped math span's separator still ends every isolate.
+                if text.unicodeScalars[index..<sorted[next].upperBound].contains(where: isParagraphSeparator) { isolates = 0 }
                 index = sorted[next].upperBound
                 continue
             }
