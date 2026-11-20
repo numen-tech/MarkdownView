@@ -34,10 +34,12 @@ struct MarkdownTableDirectionTests {
     static func borderColumns(in image: CGImage) -> [Int] {
         let width = image.width, height = image.height
         var data = [UInt8](repeating: 0, count: width * height * 4)
-        let context = CGContext(
-            data: &data, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
-            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        context?.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        data.withUnsafeMutableBytes { bytes in
+            let context = CGContext(
+                data: bytes.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            context?.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
         var columns: [Int] = []
         for x in 0..<width {
             var count = 0

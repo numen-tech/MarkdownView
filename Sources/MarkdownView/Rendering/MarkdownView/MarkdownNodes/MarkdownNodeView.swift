@@ -65,12 +65,13 @@ struct MarkdownNodeView: View {
     }
     
     /// numen fork (gemma4-qat#1765): text nodes joined into one text, as one `Text` lays them out.
-    /// Text blocks of different directions keep theirs as paragraph attributes (writing direction
-    /// and the physical alignment it reads from), so their spacing stays the blank line it was;
-    /// text blocks that agree (or have no direction) are joined exactly as before. The result
-    /// takes the first direction among them.
+    /// Blocks that all share one direction (or all have none) are joined exactly as before, and the
+    /// result takes that direction. Otherwise each block with a direction keeps it as paragraph
+    /// attributes (writing direction and the physical alignment it reads from), so the spacing
+    /// stays the blank line it was, and the result takes none: a block with no strong character
+    /// follows the container, as it would on its own.
     static func mergedText(_ nodes: [MarkdownNodeView], separator: String) -> MarkdownNodeView? {
-        let directions = nodes.compactMap(\.direction)
+        let directions = nodes.map(\.direction)
         let mixed = Set(directions).count > 1
         var merged = AttributedString()
         for node in nodes {
@@ -83,7 +84,7 @@ struct MarkdownNodeView: View {
             merged += text
         }
         guard !merged.characters.isEmpty else { return nil }
-        return MarkdownNodeView(merged).withDirection(directions.first)
+        return MarkdownNodeView(merged).withDirection(mixed ? nil : directions.first ?? nil)
     }
 
     var asAttributedString: AttributedString? {

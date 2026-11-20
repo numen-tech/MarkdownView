@@ -26,7 +26,7 @@ enum MarkdownBidiIsolation {
         guard layoutDirection == .rightToLeft || MarkdownContentDirection.containsRightToLeft(string) else {
             return text
         }
-        // Character offsets of the runs to isolate, in order and not overlapping.
+        // Character offsets of the runs to isolate.
         var spans: [Range<Int>] = []
         for (value, range) in text.runs[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self]
         where value == true {
@@ -34,40 +34,76 @@ enum MarkdownBidiIsolation {
             let upper = text.characters.distance(from: text.startIndex, to: range.upperBound)
             spans.append(lower..<upper)
         }
+        for range in leftToRightRuns(in: string) {
+            spans.append(string.distance(from: string.startIndex, to: range.lowerBound)..<string.distance(from: string.startIndex, to: range.upperBound))
+        }
+        let merged = merge(spans)
+        guard !merged.isEmpty else { return text }
+        // Built from slices of the input, whose indices stay valid: each LRI takes the attributes
+        // of the character it opens, each PDI those of the character it closes (a highlight's
+        // background runs on unbroken).
+        var result = AttributedString()
+        var index = text.startIndex
+        var cursor = (index: text.startIndex, offset: 0)
+        func advance(to target: Int) -> AttributedString.Index {
+            cursor = (text.characters.index(cursor.index, offsetBy: target - cursor.offset), target)
+            return cursor.index
+        }
+        for span in merged {
+            let start = advance(to: span.lowerBound)
+            result += text[index..<start]
+            let end = advance(to: span.upperBound)
+            let last = text.characters.index(before: end)
+            result += AttributedString(String(isolateStart), attributes: text[start..<text.characters.index(after: start)].runs.first?.attributes ?? AttributeContainer())
+            result += text[start..<end]
+            result += AttributedString(String(isolateEnd), attributes: text[last..<end].runs.first?.attributes ?? AttributeContainer())
+            index = end
+        }
+        result += text[index...]
+        return result
+    }
+
+    /// The URLs and grouped numbers in `string`, which read left to right as units. Shared with
+    /// `MarkdownContentDirection`, so a bare URL decides a block's direction no more than an
+    /// autolink does.
+    static func leftToRightRuns(in string: String) -> [Range<String.Index>] {
+        guard string.contains(where: { $0.isASCII && ($0.isNumber || $0 == "/" || $0 == ".") }) else { return [] }
         let whole = NSRange(string.startIndex..., in: string)
+        var runs: [Range<String.Index>] = []
         for (expression, isNumber) in [(url, false), (number, true)] {
             for match in expression.matches(in: string, range: whole) {
                 guard let range = Range(match.range, in: string) else { continue }
                 if isNumber, string[range].filter({ $0.isASCII && $0.isNumber }).count < 6 { continue }
-                let lower = string.distance(from: string.startIndex, to: range.lowerBound)
-                let upper = string.distance(from: string.startIndex, to: range.upperBound)
-                let span = lower..<upper
-                if !spans.contains(where: { $0.overlaps(span) }) { spans.append(span) }
+                runs.append(range)
             }
         }
-        guard !spans.isEmpty else { return text }
-        var result = text
-        // From the end, so earlier offsets stay valid. Each mark takes the attributes of the run it
-        // opens (a highlight's background runs on unbroken).
-        for span in spans.sorted(by: { $0.lowerBound > $1.lowerBound }) {
-            let end = result.characters.index(result.startIndex, offsetBy: span.upperBound)
-            let start = result.characters.index(result.startIndex, offsetBy: span.lowerBound)
-            let attributes = result[start..<result.characters.index(after: start)].runs.first?.attributes ?? AttributeContainer()
-            result.insert(AttributedString(String(isolateEnd), attributes: attributes), at: end)
-            result.insert(AttributedString(String(isolateStart), attributes: attributes), at: start)
+        return runs
+    }
+
+    /// Spans sorted and overlapping ones joined (an inline-code group inside a phone number
+    /// isolates the whole number); empty ones dropped.
+    static func merge(_ spans: [Range<Int>]) -> [Range<Int>] {
+        var merged: [Range<Int>] = []
+        for span in spans.filter({ !$0.isEmpty }).sorted(by: { $0.lowerBound < $1.lowerBound }) {
+            if let last = merged.last, last.overlaps(span) {
+                merged[merged.count - 1] = last.lowerBound..<max(last.upperBound, span.upperBound)
+            } else {
+                merged.append(span)
+            }
         }
-        return result
+        return merged
     }
 
     /// A URL with a scheme or `www.`, without the sentence punctuation after it.
     private static let url = try! NSRegularExpression(
-        pattern: #"(?:[a-zA-Z][a-zA-Z0-9+.\-]*://|www\.)[^\s<>"]*[^\s<>".,:;!?'’”)\]]"#
+        pattern: #"(?:[a-zA-Z][a-zA-Z0-9+.\-]*://|www\.)[^\s<>"]*[^\s<>".,:;!?'’”)\]،؛؟]"#
     )
 
-    /// Digits in three or more groups split by single spaces, no-break spaces, dots or hyphens,
-    /// optionally after a `+`, six digits or more: phone numbers, grouped thousands, ISO dates.
-    /// A range written `10 - 20` is not one.
+    /// Digits in three or more groups split by one kind of separator (a space, a no-break space, a
+    /// dot or a hyphen), optionally after a `+`, six digits or more: phone numbers, grouped
+    /// thousands, ISO dates. A range written `10 - 20` is not one, and two dates side by side are
+    /// two.
     private static let number = try! NSRegularExpression(
-        pattern: #"(?<![\p{L}\p{N}])\+?[0-9]{1,4}(?:[ \x{00A0}.\-][0-9]{1,6}){2,}(?![\p{L}\p{N}])"#
+        pattern: #"(?<![\p{L}\p{N}])\+?[0-9]{1,4}([ \x{00A0}.\-])[0-9]{1,6}(?:\1[0-9]{1,6})+(?![\p{L}\p{N}])"#
     )
 }

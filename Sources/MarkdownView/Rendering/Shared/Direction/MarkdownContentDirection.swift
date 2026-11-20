@@ -18,10 +18,17 @@ import Markdown
 /// right-to-left, any other letter left-to-right, and the marks LRM, RLM and ALM count. Digits,
 /// punctuation, symbols, spaces and emoji are neutral.
 public enum MarkdownContentDirection {
-    /// The direction of the first strong character of `text`, or nil when it has none.
+    /// The direction of the first strong character of `text`, or nil when it has none. As rule P2
+    /// says, characters between an isolate initiator (LRI, RLI, FSI) and its PDI are skipped.
     public static func firstStrong(in text: some StringProtocol) -> LayoutDirection? {
+        var isolates = 0
         for scalar in text.unicodeScalars {
-            if let direction = strongDirection(of: scalar) { return direction }
+            switch scalar.value {
+            case 0x2066...0x2068: isolates += 1
+            case 0x2069: isolates = max(isolates - 1, 0)
+            default:
+                if isolates == 0, let direction = strongDirection(of: scalar) { return direction }
+            }
         }
         return nil
     }
@@ -65,7 +72,11 @@ public enum MarkdownContentDirection {
         case is InlineCode, is CodeBlock, is InlineHTML, is HTMLBlock, is Markdown.Image, is SymbolLink:
             return nil
         case let link as Markdown.Link:
-            if let destination = link.destination, link.plainText == destination { return nil }
+            // An autolink: `<https://...>`, or `<name@example.com>` with its `mailto:` destination.
+            if let destination = link.destination,
+               link.plainText == destination || "mailto:" + link.plainText == destination {
+                return nil
+            }
         default:
             break
         }
@@ -76,16 +87,17 @@ public enum MarkdownContentDirection {
     }
 
     /// The first strong character of a text node's string, past any math in it (the parser's
-    /// placeholders and `$...$`-style spans: a formula's letters are not prose).
+    /// placeholders and `$...$`-style spans: a formula's letters are not prose) and past bare URLs,
+    /// which the display isolates as autolinks are.
     static func firstStrong(inText text: String, skipsMath: Bool) -> LayoutDirection? {
-        guard skipsMath, text.contains(where: { $0 == "$" || $0 == "\\" || $0 == "(" }) else {
-            return firstStrong(in: text)
+        var skipped = MarkdownBidiIsolation.leftToRightRuns(in: text)
+        if skipsMath, text.contains(where: { $0 == "$" || $0 == "\\" || $0 == "(" }) {
+            skipped += MarkdownMathPreprocessor.placeholderSegments(in: text).map(\.range)
+                + MathParser(text: text).mathRepresentations.map(\.range)
         }
-        let math = MarkdownMathPreprocessor.placeholderSegments(in: text).map(\.range)
-            + MathParser(text: text).mathRepresentations.map(\.range)
-        guard !math.isEmpty else { return firstStrong(in: text) }
+        guard !skipped.isEmpty else { return firstStrong(in: text) }
         var index = text.startIndex
-        for range in math.sorted(by: { $0.lowerBound < $1.lowerBound }) {
+        for range in skipped.sorted(by: { $0.lowerBound < $1.lowerBound }) {
             if index < range.lowerBound, let direction = firstStrong(in: text[index..<range.lowerBound]) {
                 return direction
             }

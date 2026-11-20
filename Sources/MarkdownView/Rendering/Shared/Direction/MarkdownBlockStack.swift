@@ -38,9 +38,10 @@ struct MarkdownBlockStackLayout: Layout {
     var farSide: [Bool]
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let sizes = subviews.map { $0.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)) }
-        let width = sizes.map(\.width).max() ?? 0
-        let height = sizes.map(\.height).reduce(0, +) + spacing * CGFloat(max(subviews.count - 1, 0))
+        let width = subviews.map { $0.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)).width }.max() ?? 0
+        // Heights at the width the blocks are placed at, so the stack reserves what it places.
+        let heights = subviews.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }
+        let height = heights.reduce(0, +) + spacing * CGFloat(max(subviews.count - 1, 0))
         return CGSize(width: width, height: height)
     }
 

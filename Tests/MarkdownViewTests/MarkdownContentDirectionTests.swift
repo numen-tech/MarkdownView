@@ -17,6 +17,8 @@ struct MarkdownContentDirectionTests {
         ("٣ apples", .leftToRight),
         ("\u{200F}abc", .rightToLeft),
         ("\u{200E}مرحبا", .leftToRight),
+        ("\u{2066}git\u{2069} مرحبا", .rightToLeft),
+        ("\u{2067}مرحبا\u{2069} hello", .leftToRight),
         ("日本語", .leftToRight),
     ])
     func firstStrong(text: String, expected: LayoutDirection) {
@@ -39,6 +41,10 @@ struct MarkdownContentDirectionTests {
         ("| Name | الاسم |\n|---|---|\n| a | b |", .leftToRight, false),
         ("| الاسم | Name |\n|---|---|\n| a | b |", .rightToLeft, false),
         ("> اقتباس\n> quote", .rightToLeft, false),
+        ("https://example.com مرحبا", .rightToLeft, false),
+        ("<https://example.com> مرحبا", .rightToLeft, false),
+        ("<name@example.com> مرحبا", .rightToLeft, false),
+        ("[docs](https://example.com) مرحبا", .leftToRight, false),
     ])
     func block(markdown: String, expected: LayoutDirection, math: Bool) throws {
         let block = try #require(document(markdown, math: math).child(at: 0))
@@ -63,21 +69,28 @@ struct MarkdownContentDirectionTests {
         let neutral = MarkdownNodeView("42").withDirection(nil)
         let arabic = MarkdownNodeView("مرحبا").withDirection(.rightToLeft)
 
-        let same = MarkdownNodeView([english, neutral, english], layoutPolicy: .linebreak)
+        let same = MarkdownNodeView([english, english], layoutPolicy: .linebreak)
         #expect(same.contentType == .text)
         #expect(same.direction == .leftToRight)
-        #expect(same.asAttributedString.map { String($0.characters) } == "One.\n\n42\n\nOne.")
+        #expect(same.asAttributedString.map { String($0.characters) } == "One.\n\nOne.")
 
-        let rtlFirstNeutral = MarkdownNodeView([neutral, arabic], layoutPolicy: .linebreak)
-        #expect(rtlFirstNeutral.contentType == .text)
-        #expect(rtlFirstNeutral.direction == .rightToLeft)
+        // A block with no strong character follows the container: the merged text takes no
+        // direction, and the directed paragraphs keep theirs.
+        let withNeutral = MarkdownNodeView([english, neutral, english], layoutPolicy: .linebreak)
+        #expect(withNeutral.asAttributedString.map { String($0.characters) } == "One.\n\n42\n\nOne.")
+        #expect(withNeutral.direction == nil)
+        let rtlAfterNeutral = MarkdownNodeView([neutral, arabic], layoutPolicy: .linebreak)
+        #expect(rtlAfterNeutral.contentType == .text)
+        #expect(rtlAfterNeutral.direction == nil)
+        let neutralRun = try #require(rtlAfterNeutral.asAttributedString?.runs.first)
+        #expect(neutralRun.alignment == nil)
 
         // Mixed directions stay one text (the blank line between them unchanged), each paragraph
         // carrying its own direction and alignment.
         let mixed = MarkdownNodeView([english, arabic], layoutPolicy: .linebreak)
         let text = try #require(mixed.asAttributedString)
         #expect(String(text.characters) == "One.\n\nمرحبا")
-        #expect(mixed.direction == .leftToRight)
+        #expect(mixed.direction == nil)
         let arabicRun = try #require(text.runs.first { String(text[$0.range].characters).contains("مرحبا") })
         #expect(arabicRun.writingDirection == .rightToLeft)
         #expect(arabicRun.alignment == .right)
@@ -86,6 +99,7 @@ struct MarkdownContentDirectionTests {
 
         // Agreeing blocks get no paragraph attributes: they lay out exactly as before.
         #expect(same.asAttributedString?.runs.allSatisfy { $0.alignment == nil } == true)
+        #expect(MarkdownNodeView([neutral, neutral], layoutPolicy: .linebreak).direction == nil)
 
         // Inline pieces of one paragraph keep merging whatever they hold.
         let inline = MarkdownNodeView([MarkdownNodeView("abc "), MarkdownNodeView("مرحبا")])
@@ -106,6 +120,30 @@ struct MarkdownContentDirectionTests {
         #expect(shown.contains("\u{2066}+966 50 123 4567\u{2069}."))
         // The isolates are display-only: the rendered node itself holds none.
         #expect(!String(attributed.characters).contains("\u{2066}"))
+    }
+
+    @Test("Several isolates in one text, and overlapping runs joined", .tags(.rendering))
+    func severalIsolates() {
+        var code = AttributedString("50")
+        code[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        var first = AttributedString("a")
+        first[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        let text = AttributedString("قيمة ") + first + AttributedString(" و +966 ") + code + AttributedString(" 123 4567 ثم")
+        let shown = String(MarkdownBidiIsolation.isolated(text, layoutDirection: .rightToLeft).characters)
+        #expect(shown == "قيمة \u{2066}a\u{2069} و \u{2066}+966 50 123 4567\u{2069} ثم")
+    }
+
+    @Test("Sentence punctuation stays outside a URL; two dates are two runs", .tags(.rendering))
+    func urlAndDateEdges() {
+        let url = String(MarkdownBidiIsolation.isolated(AttributedString("راجع https://example.com؟"), layoutDirection: .rightToLeft).characters)
+        #expect(url == "راجع \u{2066}https://example.com\u{2069}؟")
+        let dates = String(MarkdownBidiIsolation.isolated(AttributedString("من 2024-05-01 2025-06-01"), layoutDirection: .rightToLeft).characters)
+        #expect(dates == "من \u{2066}2024-05-01\u{2069} \u{2066}2025-06-01\u{2069}")
+    }
+
+    @Test("Spans merge sorted, overlapping ones joined", .tags(.rendering))
+    func mergeSpans() {
+        #expect(MarkdownBidiIsolation.merge([5..<9, 0..<2, 7..<12, 3..<3]) == [0..<2, 5..<12])
     }
 
     @Test("Left-to-right text is left alone", .tags(.rendering))

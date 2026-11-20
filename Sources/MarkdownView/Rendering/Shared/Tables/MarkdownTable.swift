@@ -34,6 +34,8 @@ fileprivate extension View {
 }
 
 fileprivate struct MarkdownTableCellStylingViewModifier: ViewModifier {
+    @Environment(\.layoutDirection) private var layoutDirection
+
     func body(content: Content) -> some View {
         content
             .backgroundPreferenceValue(
@@ -86,6 +88,9 @@ fileprivate struct MarkdownTableCellStylingViewModifier: ViewModifier {
                         ForEach(styleCollection.cells) { cell in
                             if let overlayContent = cell.overlayContent {
                                 overlayContent
+                                    // The caller's overlay lays out in the table's direction; only
+                                    // its placement is physical.
+                                    .environment(\.layoutDirection, layoutDirection)
                                     .offset(styleCollection.offset(for: cell.position))
                                     .frame(
                                         width: styleCollection.widths[cell.position.column],
