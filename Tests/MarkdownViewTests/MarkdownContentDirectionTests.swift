@@ -162,6 +162,12 @@ struct MarkdownContentDirectionTests {
         #expect(MarkdownContentDirection.of(code, skipsMath: false) == .rightToLeft)
         let url = try #require(document("\u{2067}abc https://x.org/a\u{001C}שלום").child(at: 0))
         #expect(MarkdownContentDirection.of(url, skipsMath: false) == .rightToLeft)
+        let twoURLs = try #require(document("https://a.example\u{001C}https://b.example שלום").child(at: 0))
+        #expect(MarkdownContentDirection.of(twoURLs, skipsMath: false) == .rightToLeft)
+        let comment = try #require(document("\u{2067}abc <!--a\nb--> שלום\u{2069} English").child(at: 0))
+        #expect(MarkdownContentDirection.of(comment, skipsMath: false) == .leftToRight)
+        let lineBreakTag = try #require(document("\u{2067}abc <br/> שלום").child(at: 0))
+        #expect(MarkdownContentDirection.of(lineBreakTag, skipsMath: false) == .rightToLeft)
         let found = MarkdownBidiIsolation.urlRanges(in: "https://x.org/a\u{2029}b")
         #expect(found.map { "https://x.org/a\u{2029}b"[$0] } == ["https://x.org/a"])
         // Renderer level: the paragraph node takes the right-to-left direction.

@@ -128,7 +128,10 @@ public enum MarkdownContentDirection {
     private static func skippedText(of markup: any Markup) -> String {
         switch markup {
         case let code as InlineCode: return code.code
-        case let html as InlineHTML: return html.rawHTML
+        case let html as InlineHTML:
+            // The display converts inline HTML: a comment or a tag shows nothing (its source
+            // newlines included), and only a line break tag shows a newline.
+            return html.rawHTML.range(of: #"^<br\s*/?>$"#, options: [.regularExpression, .caseInsensitive]) != nil ? "\n" : ""
         default: return ""
         }
     }

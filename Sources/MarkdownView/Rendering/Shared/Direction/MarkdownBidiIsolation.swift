@@ -124,12 +124,6 @@ enum MarkdownBidiIsolation {
         guard string.contains("://") || string.contains("www.") else { return [] }
         return url.matches(in: string, range: NSRange(string.startIndex..., in: string)).compactMap { match in
             guard var range = Range(match.range, in: string) else { return nil }
-            // A URL ends at a paragraph separator: the display shows one as a new paragraph,
-            // which ends any isolate around the URL.
-            if let separator = string.unicodeScalars[range].firstIndex(where: MarkdownContentDirection.isParagraphSeparator) {
-                guard separator > range.lowerBound else { return nil }
-                range = range.lowerBound..<separator
-            }
             // A closing parenthesis that balances one in the URL belongs to it
             // (`https://en.wikipedia.org/wiki/Swift_(programming_language)`).
             while range.upperBound < string.endIndex, string[range.upperBound] == ")",
@@ -195,8 +189,10 @@ enum MarkdownBidiIsolation {
     }
 
     /// A URL with a scheme or `www.`, without the sentence punctuation after it.
+    /// A URL never runs across a paragraph separator (bidi class B: `\s` misses U+001C-U+001E),
+    /// so matching resumes after one at the next URL.
     private static let url = try! NSRegularExpression(
-        pattern: #"(?:[a-zA-Z][a-zA-Z0-9+.\-]*://|www\.)[^\s<>"،؛؟\x{200E}\x{200F}\x{2066}-\x{2069}]*[^\s<>".,:;!?'’”)\]،؛؟\x{200E}\x{200F}\x{2066}-\x{2069}]"#
+        pattern: #"(?:[a-zA-Z][a-zA-Z0-9+.\-]*://|www\.)[^\s<>"،؛؟\x{200E}\x{200F}\x{2066}-\x{2069}\x{0A}\x{0D}\x{1C}-\x{1E}\x{85}\x{2029}]*[^\s<>".,:;!?'’”)\]،؛؟\x{200E}\x{200F}\x{2066}-\x{2069}\x{0A}\x{0D}\x{1C}-\x{1E}\x{85}\x{2029}]"#
     )
 
     /// An ISO date, `2026-11-17`. (ASCII digits only here and in `number`: Arabic-Indic digit
