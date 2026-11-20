@@ -55,7 +55,7 @@ enum MarkdownBidiIsolation {
         }
         for measure in acceptedMeasures(in: string, isolated: merge(spans), numbers: found) {
             spans.append(measure.whole)
-            found.append(measure.unit)
+            found += measure.units
         }
         let unbroken = subtracting(merge(tagged), from: found.sorted { $0.lowerBound < $1.lowerBound })
         var unbrokenCursor = 0
@@ -136,30 +136,44 @@ enum MarkdownBidiIsolation {
     }
 
     /// The measures of `string` (`measure`) that get an isolate, as character offsets: the whole
-    /// match, and its number and first word, which never break. One forward walk keeps the last
-    /// strong direction outside the runs already isolated (`isolated`, sorted and merged, the
-    /// measures taken so far, and isolates written in the text itself), reset at each newline. A
-    /// measure after a left-to-right letter is left alone: there rule W7 already gives the number
-    /// the word's direction and the phrase is one run, which an isolate would split (`the value
-    /// 10 GB`). A measure that starts inside an isolated run belongs to it (inline code, a URL),
-    /// except that a found grouped number (`numbers`) ending where the measure's number ends
-    /// takes the unit into its isolate (`1 234 567 MB`).
+    /// match, and each number with the word after it (`pair`), which never break. One forward walk
+    /// keeps the last strong direction outside the runs already isolated (`isolated`, sorted and
+    /// merged, and the measures taken so far), reset at each newline and saved across an isolate
+    /// written in the text. A measure after a left-to-right letter is left alone: there rule W7
+    /// already gives the number the word's direction and the phrase is one run, which an isolate
+    /// would split (`the value 10 GB`). The regex runs with the isolated runs that are not found
+    /// numbers masked (inline code, URLs), so it neither starts in one nor runs through one; a found
+    /// grouped number ending where a measure's number ends takes the unit into its isolate.
     static func acceptedMeasures(
         in string: String, isolated: [Range<Int>], numbers: [Range<Int>]
-    ) -> [(whole: Range<Int>, unit: Range<Int>)] {
+    ) -> [(whole: Range<Int>, units: [Range<Int>])] {
         guard string.contains(where: { $0.isASCII && $0.isNumber }) else { return [] }
-        let matches = measure.matches(in: string, range: NSRange(string.startIndex..., in: string)).compactMap {
-            match -> [Range<String.Index>]? in
-            guard let whole = Range(match.range, in: string), let unit = Range(match.range(at: 1), in: string),
-                  let number = Range(match.range(at: 2), in: string) else { return nil }
-            return [whole, unit, number]
+        // One character for one, so character offsets in `masked` are those of `string`.
+        let opaque = subtracting(merge(numbers), from: isolated)
+        var masked = ""
+        masked.reserveCapacity(string.utf8.count)
+        var opaqueCursor = 0
+        for (offset, character) in string.enumerated() {
+            while opaqueCursor < opaque.count, opaque[opaqueCursor].upperBound <= offset { opaqueCursor += 1 }
+            masked.append(opaqueCursor < opaque.count && opaque[opaqueCursor].contains(offset) ? "_" : character)
+        }
+        let whole = NSRange(masked.startIndex..., in: masked)
+        let matches = measure.matches(in: masked, range: whole).compactMap { match -> [Range<String.Index>]? in
+            guard let range = Range(match.range, in: masked), let number = Range(match.range(at: 1), in: masked) else { return nil }
+            let pairs = pair.matches(in: masked, range: match.range).compactMap { Range($0.range, in: masked) }
+            return [range, number] + pairs
         }
         guard !matches.isEmpty else { return [] }
-        let offsets = characterOffsets(of: matches.flatMap { $0 }, in: string)
-        let candidates = matches.indices.map { (whole: offsets[3 * $0], unit: offsets[3 * $0 + 1], number: offsets[3 * $0 + 2]) }
-        var accepted: [(whole: Range<Int>, unit: Range<Int>)] = []
+        let offsets = characterOffsets(of: matches.flatMap { $0 }, in: masked)
+        var candidates: [(whole: Range<Int>, number: Range<Int>, units: [Range<Int>])] = []
+        var next = 0
+        for match in matches {
+            candidates.append((offsets[next], offsets[next + 1], Array(offsets[(next + 2)..<(next + match.count)])))
+            next += match.count
+        }
+        var accepted: [(whole: Range<Int>, units: [Range<Int>])] = []
         var lastStrong: LayoutDirection?
-        var literalDepth = 0
+        var saved: [LayoutDirection?] = []
         var skip = 0
         var number = 0
         var candidate = 0
@@ -171,13 +185,12 @@ enum MarkdownBidiIsolation {
             while candidate < candidates.count, candidates[candidate].whole.lowerBound <= offset {
                 let measure = candidates[candidate]
                 candidate += 1
-                guard measure.whole.lowerBound == offset, offset >= acceptedEnd, literalDepth == 0,
-                      lastStrong != .leftToRight else { continue }
+                guard measure.whole.lowerBound == offset, offset >= acceptedEnd, lastStrong != .leftToRight else { continue }
                 if !insideIsolated {
-                    accepted.append((measure.whole, measure.unit))
+                    accepted.append((measure.whole, measure.units))
                 } else if number < numbers.count, numbers[number].contains(offset),
                           numbers[number].upperBound == measure.number.upperBound {
-                    accepted.append((numbers[number].lowerBound..<measure.whole.upperBound, measure.unit))
+                    accepted.append((numbers[number].lowerBound..<measure.whole.upperBound, measure.units))
                 } else {
                     continue
                 }
@@ -185,12 +198,13 @@ enum MarkdownBidiIsolation {
             }
             if character.isNewline {
                 lastStrong = nil
-                literalDepth = 0
+                saved.removeAll()
             } else if character == isolateEnd {
-                literalDepth = max(0, literalDepth - 1)
+                if let outer = saved.popLast() { lastStrong = outer }
             } else if character == isolateStart || character == "\u{2067}" || character == "\u{2068}" {
-                literalDepth += 1
-            } else if !insideIsolated, offset >= acceptedEnd, literalDepth == 0,
+                saved.append(lastStrong)
+                lastStrong = nil
+            } else if !insideIsolated, offset >= acceptedEnd,
                       let direction = character.unicodeScalars.lazy.compactMap(MarkdownContentDirection.strongDirection(of:)).first {
                 lastStrong = direction
             }
@@ -328,23 +342,28 @@ enum MarkdownBidiIsolation {
         pattern: #"(?<![\p{L}\p{N}])[0-9]{4}-[0-9]{2}-[0-9]{2}(?![\p{L}\p{N}])"#
     )
 
-    /// A measure: a whole ASCII number, signed, decimal, a time, a fraction or a range too (`-5`,
-    /// `12.5`, `12:30`, `1/2`, `5-10`), then one or more Latin words (accented ones too), each after
-    /// one space or no-break space; numbers may follow among the words: `1 ms`, `2 GB RAM`, `40 km/h`,
-    /// `2 GB to 4 GB`, `3 files in the folder`. Between the number and the word a space takes the
-    /// paragraph's direction and the two swap (gemma4-qat#1986). Group 1 is the number and its first
-    /// word, the part that never breaks, group 2 the number. A number with no space before its unit
+    /// A measure: a whole ASCII number, signed, decimal, grouped by spaces, a time, a fraction or a
+    /// range too (`-5`, `12.5`, `12 345`, `12:30`, `1/2`, `5-10`), then one or more Latin words
+    /// (accented ones too), each after one space or no-break space; numbers may follow among the
+    /// words: `1 ms`, `2 GB RAM`, `40 km/h`, `-5 ms to +5 ms`, `3 files in the folder`. Between the
+    /// number and the word a space takes the paragraph's direction and the two swap
+    /// (gemma4-qat#1986). Group 1 is the first number. A number with no space before its unit
     /// (`5GB`) is one run already, and a sentence's full stop stays outside (`1 ms.`).
-    private static let measure: NSRegularExpression = {
-        let number = #"[0-9]+(?:[.,:/\-\x{2013}][0-9]+)*"#
-        let word = #"\p{Latin}[\p{Latin}\p{M}0-9]*(?:/\p{Latin}+)?"#
-        let space = #"[ \x{00A0}]"#
-        return try! NSRegularExpression(
-            pattern: #"(?<![\p{L}\p{N}])(?<![0-9][.,:/\-\x{2013}])"#
-                + "(((?:\\+|-|\u{2212})?\(number))\(space)\(word))(?:\(space)(?:\(word)|\(number)))*"
-                + #"(?![\p{L}\p{N}\p{M}])"#
-        )
-    }()
+    private static let measure = try! NSRegularExpression(
+        pattern: #"(?<![\p{L}\p{N}])(?<![0-9][.,:/\-\x{2013}])("# + Measure.number + ")" + Measure.space + Measure.word
+            + "(?:" + Measure.space + "(?:" + Measure.word + "|" + Measure.number + "))*" + #"(?![\p{L}\p{N}\p{M}])"#
+    )
+
+    /// A number and the word after it, inside a measure: the part that never breaks.
+    private static let pair = try! NSRegularExpression(
+        pattern: #"(?<![\p{L}\p{N}])"# + Measure.number + Measure.space + Measure.word
+    )
+
+    private enum Measure {
+        static let number = #"(?:\+|-|\x{2212})?(?:[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})+(?:[.,][0-9]+)?|[0-9]+(?:[.,:/\-\x{2013}][0-9]+)*)"#
+        static let word = #"\p{Latin}[\p{Latin}\p{M}0-9]*(?:/\p{Latin}+)?"#
+        static let space = #"[ \x{00A0}]"#
+    }
 
     /// Digits in three or more groups split by single spaces, no-break spaces, dots or hyphens,
     /// optionally after a `+`, six digits or more: phone numbers and grouped thousands. A range

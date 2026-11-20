@@ -258,7 +258,12 @@ struct MarkdownContentDirectionTests {
         #expect(shown("المسافة 2 mètres") == "المسافة \u{2066}2\u{00A0}mètres\u{2069}")
         #expect(shown("גודל 1 234 567 MB") == "גודל \u{2066}1\u{00A0}234\u{00A0}567\u{00A0}MB\u{2069}")
         // One phrase, one isolate: the two measures keep their English order.
-        #expect(shown("من 2 GB to 4 GB") == "من \u{2066}2\u{00A0}GB to 4 GB\u{2069}")
+        #expect(shown("من 2 GB to 4 GB") == "من \u{2066}2\u{00A0}GB to 4\u{00A0}GB\u{2069}")
+        #expect(shown("من -5 ms to +5 ms") == "من \u{2066}-5\u{00A0}ms to +5\u{00A0}ms\u{2069}")
+        #expect(shown("الحجم 12 345 MB") == "الحجم \u{2066}12\u{00A0}345\u{00A0}MB\u{2069}")
+        #expect(shown("الحجم −1 234 567 MB") == "الحجم \u{2066}−1\u{00A0}234\u{00A0}567\u{00A0}MB\u{2069}")
+        // A measure inside an isolate written in the text, right to left, is isolated too.
+        #expect(shown("abc \u{2067}שלום 2 GB\u{2069}") == "abc \u{2067}שלום \u{2066}2\u{00A0}GB\u{2069}\u{2069}")
         // An isolate written in the text hides its letters from W7 too.
         #expect(shown("שלום \u{2066}abc\u{2069} 2 GB") == "שלום \u{2066}abc\u{2069} \u{2066}2\u{00A0}GB\u{2069}")
     }
@@ -278,6 +283,11 @@ struct MarkdownContentDirectionTests {
         let crossing = AttributedString("שלום +966 ") + middle + AttributedString(" 4567")
         let crossed = String(MarkdownBidiIsolation.isolated(crossing, layoutDirection: .rightToLeft).characters)
         #expect(crossed == "שלום \u{2066}+966\u{00A0}50 123\u{00A0}4567\u{2069}")
+        // A measure in code does not hide the one after it.
+        var unit = AttributedString("1 ms")
+        unit[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        let after = String(MarkdownBidiIsolation.isolated(AttributedString("המדה ") + unit + AttributedString(" 2 GB"), layoutDirection: .rightToLeft).characters)
+        #expect(after == "המדה \u{2066}1 ms\u{2069} \u{2066}2\u{00A0}GB\u{2069}")
     }
 
     @Test("Left-to-right text is unchanged, measures and phone numbers included", .tags(.rendering))
