@@ -260,10 +260,11 @@ struct MarkdownContentDirectionTests {
         // One phrase, one isolate: the two measures keep their English order.
         #expect(shown("من 2 GB to 4 GB") == "من \u{2066}2\u{00A0}GB to 4\u{00A0}GB\u{2069}")
         #expect(shown("من -5 ms to +5 ms") == "من \u{2066}-5\u{00A0}ms to +5\u{00A0}ms\u{2069}")
-        #expect(shown("الحجم 12 345 MB") == "الحجم \u{2066}12\u{00A0}345\u{00A0}MB\u{2069}")
-        #expect(shown("الحجم −1 234 567 MB") == "الحجم \u{2066}−1\u{00A0}234\u{00A0}567\u{00A0}MB\u{2069}")
-        // A measure inside an isolate written in the text, right to left, is isolated too.
-        #expect(shown("abc \u{2067}שלום 2 GB\u{2069}") == "abc \u{2067}שלום \u{2066}2\u{00A0}GB\u{2069}\u{2069}")
+        // Two groups are two numbers: the floor stays out of the files' isolate.
+        #expect(shown("في الطابق 3 100 files") == "في الطابق 3 \u{2066}100\u{00A0}files\u{2069}")
+        // Text that writes its own isolates is left as written inside them, and W7 resumes after.
+        #expect(shown("abc \u{2068}2 GB שלום\u{2069}") == "abc \u{2068}2 GB שלום\u{2069}")
+        #expect(shown("שלום \u{2066}abc\u{2069} 2 GB") == "שלום \u{2066}abc\u{2069} \u{2066}2\u{00A0}GB\u{2069}")
         // An isolate written in the text hides its letters from W7 too.
         #expect(shown("שלום \u{2066}abc\u{2069} 2 GB") == "שלום \u{2066}abc\u{2069} \u{2066}2\u{00A0}GB\u{2069}")
     }
@@ -288,6 +289,11 @@ struct MarkdownContentDirectionTests {
         unit[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
         let after = String(MarkdownBidiIsolation.isolated(AttributedString("המדה ") + unit + AttributedString(" 2 GB"), layoutDirection: .rightToLeft).characters)
         #expect(after == "המדה \u{2066}1 ms\u{2069} \u{2066}2\u{00A0}GB\u{2069}")
+        // A date inside code stays the code's.
+        var version = AttributedString("v2/2024-05-01")
+        version[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        let dated = String(MarkdownBidiIsolation.isolated(AttributedString("גרסה ") + version + AttributedString(" results"), layoutDirection: .rightToLeft).characters)
+        #expect(dated == "גרסה \u{2066}v2/2024-05-01\u{2069} results")
     }
 
     @Test("Left-to-right text is unchanged, measures and phone numbers included", .tags(.rendering))

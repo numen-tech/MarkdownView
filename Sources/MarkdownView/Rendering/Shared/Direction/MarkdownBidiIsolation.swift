@@ -138,33 +138,46 @@ enum MarkdownBidiIsolation {
     /// The measures of `string` (`measure`) that get an isolate, as character offsets: the whole
     /// match, and each number with the word after it (`pair`), which never break. One forward walk
     /// keeps the last strong direction outside the runs already isolated (`isolated`, sorted and
-    /// merged, and the measures taken so far), reset at each newline and saved across an isolate
-    /// written in the text. A measure after a left-to-right letter is left alone: there rule W7
+    /// merged, and the measures taken so far), reset at each newline and restored after an isolate
+    /// written in the text, inside which no measure is taken. A measure after a left-to-right letter is left alone: there rule W7
     /// already gives the number the word's direction and the phrase is one run, which an isolate
-    /// would split (`the value 10 GB`). The regex runs with the isolated runs that are not found
-    /// numbers masked (inline code, URLs), so it neither starts in one nor runs through one; a found
-    /// grouped number ending where a measure's number ends takes the unit into its isolate.
+    /// would split (`the value 10 GB`). The regex runs between inline code and URLs; a found
+    /// grouped number ending where a measure's number ends takes the unit into its isolate
+    /// (`1 234 567 MB`).
     static func acceptedMeasures(
         in string: String, isolated: [Range<Int>], numbers: [Range<Int>]
     ) -> [(whole: Range<Int>, units: [Range<Int>])] {
         guard string.contains(where: { $0.isASCII && $0.isNumber }) else { return [] }
-        // One character for one, so character offsets in `masked` are those of `string`.
-        let opaque = subtracting(merge(numbers), from: isolated)
-        var masked = ""
-        masked.reserveCapacity(string.utf8.count)
-        var opaqueCursor = 0
-        for (offset, character) in string.enumerated() {
-            while opaqueCursor < opaque.count, opaque[opaqueCursor].upperBound <= offset { opaqueCursor += 1 }
-            masked.append(opaqueCursor < opaque.count && opaque[opaqueCursor].contains(offset) ? "_" : character)
+        // The regex runs on the gaps between the opaque runs (inline code, URLs: the isolated runs
+        // that hold no found number), each gap's edges taken as boundaries, so a match neither starts
+        // in one nor runs through one.
+        var numberCursor = 0
+        let sortedNumbers = numbers.sorted { $0.lowerBound < $1.lowerBound }
+        let opaque = isolated.filter { span in
+            while numberCursor < sortedNumbers.count, sortedNumbers[numberCursor].upperBound <= span.lowerBound { numberCursor += 1 }
+            return !(numberCursor < sortedNumbers.count && sortedNumbers[numberCursor].overlaps(span))
         }
-        let whole = NSRange(masked.startIndex..., in: masked)
-        let matches = measure.matches(in: masked, range: whole).compactMap { match -> [Range<String.Index>]? in
-            guard let range = Range(match.range, in: masked), let number = Range(match.range(at: 1), in: masked) else { return nil }
-            let pairs = pair.matches(in: masked, range: match.range).compactMap { Range($0.range, in: masked) }
-            return [range, number] + pairs
+        var gaps: [Range<String.Index>] = []
+        var gapStart = string.startIndex
+        var opaqueCursor = 0
+        var inOpaque = false
+        for (offset, index) in string.indices.enumerated() {
+            while opaqueCursor < opaque.count, opaque[opaqueCursor].upperBound <= offset { opaqueCursor += 1 }
+            let opaqueHere = opaqueCursor < opaque.count && opaque[opaqueCursor].contains(offset)
+            if opaqueHere, !inOpaque { gaps.append(gapStart..<index) }
+            if !opaqueHere, inOpaque { gapStart = index }
+            inOpaque = opaqueHere
+        }
+        if !inOpaque { gaps.append(gapStart..<string.endIndex) }
+        let matches = gaps.filter { !$0.isEmpty }.flatMap { gap in
+            measure.matches(in: string, range: NSRange(gap, in: string)).compactMap { match -> [Range<String.Index>]? in
+                guard let range = Range(match.range, in: string), let number = Range(match.range(at: 1), in: string) else { return nil }
+                let pairs = pair.matches(in: string, range: match.range).compactMap { Range($0.range, in: string) }
+                return [range, number] + pairs
+            }
         }
         guard !matches.isEmpty else { return [] }
-        let offsets = characterOffsets(of: matches.flatMap { $0 }, in: masked)
+        let offsets = characterOffsets(of: matches.flatMap { $0 }, in: string)
         var candidates: [(whole: Range<Int>, number: Range<Int>, units: [Range<Int>])] = []
         var next = 0
         for match in matches {
@@ -185,7 +198,10 @@ enum MarkdownBidiIsolation {
             while candidate < candidates.count, candidates[candidate].whole.lowerBound <= offset {
                 let measure = candidates[candidate]
                 candidate += 1
-                guard measure.whole.lowerBound == offset, offset >= acceptedEnd, lastStrong != .leftToRight else { continue }
+                // Text that writes its own isolates is left as it reads (an FSI resolves from its
+                // first strong letter, which an inner isolate would hide).
+                guard measure.whole.lowerBound == offset, offset >= acceptedEnd, saved.isEmpty,
+                      lastStrong != .leftToRight else { continue }
                 if !insideIsolated {
                     accepted.append((measure.whole, measure.units))
                 } else if number < numbers.count, numbers[number].contains(offset),
@@ -342,8 +358,8 @@ enum MarkdownBidiIsolation {
         pattern: #"(?<![\p{L}\p{N}])[0-9]{4}-[0-9]{2}-[0-9]{2}(?![\p{L}\p{N}])"#
     )
 
-    /// A measure: a whole ASCII number, signed, decimal, grouped by spaces, a time, a fraction or a
-    /// range too (`-5`, `12.5`, `12 345`, `12:30`, `1/2`, `5-10`), then one or more Latin words
+    /// A measure: a whole ASCII number, signed, decimal, a time, a fraction or a range too (`-5`,
+    /// `12.5`, `12:30`, `1/2`, `5-10`; a number grouped by spaces is found as a number first), then one or more Latin words
     /// (accented ones too), each after one space or no-break space; numbers may follow among the
     /// words: `1 ms`, `2 GB RAM`, `40 km/h`, `-5 ms to +5 ms`, `3 files in the folder`. Between the
     /// number and the word a space takes the paragraph's direction and the two swap
@@ -360,7 +376,7 @@ enum MarkdownBidiIsolation {
     )
 
     private enum Measure {
-        static let number = #"(?:\+|-|\x{2212})?(?:[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})+(?:[.,][0-9]+)?|[0-9]+(?:[.,:/\-\x{2013}][0-9]+)*)"#
+        static let number = #"(?:\+|-|\x{2212})?[0-9]+(?:[.,:/\-\x{2013}][0-9]+)*"#
         static let word = #"\p{Latin}[\p{Latin}\p{M}0-9]*(?:/\p{Latin}+)?"#
         static let space = #"[ \x{00A0}]"#
     }
