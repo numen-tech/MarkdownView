@@ -13,9 +13,13 @@ import SwiftUI
 /// reverse). Without an isolate their neutral characters (`-`, `.`, `/`, spaces) take the
 /// paragraph's direction and the run splits and reorders.
 ///
+/// A number with Latin words after it (`1 ms`, `2 GB RAM`) is isolated too, and inside a found
+/// number, date or measure the spaces show as no-break spaces, so a line never breaks inside one
+/// (gemma4-qat#1986: `+966 50 123` ended one line and `4567` began the next).
+///
 /// Applied only to the text handed to `Text` (`_MarkdownText`), never to the markdown, so a
 /// copy of the reply, Read Aloud, export and the stored history keep the model's bytes. Selecting
-/// and copying the displayed text does carry the (invisible) isolates. Left alone when the text
+/// and copying the displayed text does carry the (invisible) isolates and those no-break spaces. Left alone when the text
 /// holds no right-to-left letter and lays out left to right: there an isolate changes nothing.
 enum MarkdownBidiIsolation {
     static let isolateStart: Character = "\u{2066}"
@@ -34,6 +38,9 @@ enum MarkdownBidiIsolation {
         var tagged = characterOffsets(of: taggedRanges, in: text.characters)
         tagged.sort { $0.lowerBound < $1.lowerBound }
         var spans = tagged
+        // The found numbers, dates and measures (`1 ms`), whose spaces become no-break spaces in
+        // the display, so a line never breaks inside one (gemma4-qat#1986).
+        var unbroken: [Range<Int>] = []
         var next = 0
         let runs = leftToRightRuns(in: string).sorted { $0.range.lowerBound < $1.range.lowerBound }
         for (run, span) in zip(runs, characterOffsets(of: runs.map(\.range), in: string)) {
@@ -41,6 +48,8 @@ enum MarkdownBidiIsolation {
                 // Found runs come in order, so one cursor walks the tagged ones.
                 while next < tagged.count, tagged[next].upperBound <= span.lowerBound { next += 1 }
                 if next < tagged.count, tagged[next].overlaps(span) { continue }
+            } else {
+                unbroken.append(span)
             }
             spans.append(span)
         }
@@ -70,13 +79,35 @@ enum MarkdownBidiIsolation {
             let end = advance(to: span.upperBound)
             let last = text.characters.index(before: end)
             result += AttributedString(String(isolateStart), attributes: text[start..<text.characters.index(after: start)].runs.first?.attributes ?? AttributeContainer())
-            result += text[start..<end]
+            result += keptTogether(text[start..<end], from: span.lowerBound, unbroken: unbroken)
             result += AttributedString(String(isolateEnd), attributes: text[last..<end].runs.first?.attributes ?? AttributeContainer())
             index = end
         }
         result += text[index...]
         return result
     }
+
+    /// `slice` (starting at character offset `offset`), with each space inside an `unbroken` range
+    /// replaced by a no-break space of the same attributes: one character for one, so the offsets
+    /// after it hold.
+    static func keptTogether(_ slice: AttributedSubstring, from offset: Int, unbroken: [Range<Int>]) -> AttributedString {
+        var piece = AttributedString(slice)
+        let end = offset + piece.characters.count
+        let spaces = piece.characters.enumerated().compactMap { position, character -> Int? in
+            let at = offset + position
+            return character == " " && unbroken.contains(where: { $0.contains(at) }) ? position : nil
+        }
+        guard !spaces.isEmpty, offset < end else { return piece }
+        for position in spaces.reversed() {
+            let index = piece.characters.index(piece.startIndex, offsetBy: position)
+            let after = piece.characters.index(after: index)
+            let attributes = piece[index..<after].runs.first?.attributes ?? AttributeContainer()
+            piece.replaceSubrange(index..<after, with: AttributedString(String(noBreakSpace), attributes: attributes))
+        }
+        return piece
+    }
+
+    static let noBreakSpace: Character = "\u{00A0}"
 
     /// The character offsets of `ranges` in `collection`, found in one forward walk over its
     /// bounds. A distance from the start for each range would make a long reply with many runs
@@ -116,7 +147,16 @@ enum MarkdownBidiIsolation {
             guard let range = Range(match.range, in: string) else { return nil }
             return string[range].filter({ $0.isASCII && $0.isNumber }).count >= 6 ? range : nil
         }
-        return urls.map { ($0, true) } + (dates + numbers).map { ($0, false) }
+        // A number and the Latin words after it (`1 ms`, `2 GB RAM`), outside URLs: between the
+        // number and the word, a space takes the paragraph's direction and the two swap (gemma4-qat#1986).
+        // Not after a left-to-right word (`the value 10 GB`): there the number already takes the
+        // word's direction (rule W7) and the whole phrase is one run, which an isolate would split.
+        let measures = ranges(measure).filter { range in
+            !urls.contains(where: { $0.overlaps(range) })
+                && string[..<range.lowerBound].unicodeScalars.reversed()
+                    .lazy.compactMap(MarkdownContentDirection.strongDirection(of:)).first != .leftToRight
+        }
+        return urls.map { ($0, true) } + (dates + numbers + measures).map { ($0, false) }
     }
 
     /// The bare URLs in `string` (`MarkdownContentDirection` skips them as it skips autolinks).
@@ -204,6 +244,14 @@ enum MarkdownBidiIsolation {
     /// isolate would not fix them.)
     private static let date = try! NSRegularExpression(
         pattern: #"(?<![\p{L}\p{N}])[0-9]{4}-[0-9]{2}-[0-9]{2}(?![\p{L}\p{N}])"#
+    )
+
+    /// An ASCII number, a decimal one too, then one or more Latin words, each after one space or
+    /// no-break space: `1 ms`, `12.5 GB`, `2 GB RAM`, `40 km/h`. A Latin word before a number
+    /// needs nothing (the number takes the word's direction); a number with no space before its
+    /// unit (`5GB`) stays one run on its own.
+    private static let measure = try! NSRegularExpression(
+        pattern: #"(?<![\p{L}\p{N}.,])[0-9]+(?:[.,][0-9]+)?(?:[ \x{00A0}][A-Za-z][A-Za-z0-9]*(?:/[A-Za-z]+)?)+(?![\p{L}\p{N}])"#
     )
 
     /// Digits in three or more groups split by single spaces, no-break spaces, dots or hyphens,
