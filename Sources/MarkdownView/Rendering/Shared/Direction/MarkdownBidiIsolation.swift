@@ -41,6 +41,7 @@ enum MarkdownBidiIsolation {
         // The found numbers and dates, and each measure's number and first word (`1 ms`), whose
         // spaces show as no-break spaces, so a line never breaks inside one (gemma4-qat#1986).
         var found: [Range<Int>] = []
+        var opaque = tagged
         var next = 0
         let runs = leftToRightRuns(in: string).sorted { $0.range.lowerBound < $1.range.lowerBound }
         for (run, span) in zip(runs, characterOffsets(of: runs.map(\.range), in: string)) {
@@ -48,12 +49,13 @@ enum MarkdownBidiIsolation {
                 // Found runs come in order, so one cursor walks the tagged ones.
                 while next < tagged.count, tagged[next].upperBound <= span.lowerBound { next += 1 }
                 if next < tagged.count, tagged[next].overlaps(span) { continue }
+                opaque.append(span)
             } else {
                 found.append(span)
             }
             spans.append(span)
         }
-        for measure in acceptedMeasures(in: string, isolated: merge(spans), numbers: found) {
+        for measure in acceptedMeasures(in: string, isolated: merge(spans), numbers: found, opaque: merge(opaque)) {
             spans.append(measure.whole)
             found += measure.units
         }
@@ -145,18 +147,12 @@ enum MarkdownBidiIsolation {
     /// grouped number ending where a measure's number ends takes the unit into its isolate
     /// (`1 234 567 MB`).
     static func acceptedMeasures(
-        in string: String, isolated: [Range<Int>], numbers: [Range<Int>]
+        in string: String, isolated: [Range<Int>], numbers: [Range<Int>], opaque: [Range<Int>]
     ) -> [(whole: Range<Int>, units: [Range<Int>])] {
         guard string.contains(where: { $0.isASCII && $0.isNumber }) else { return [] }
-        // The regex runs on the gaps between the opaque runs (inline code, URLs: the isolated runs
-        // that hold no found number), each gap's edges taken as boundaries, so a match neither starts
-        // in one nor runs through one.
-        var numberCursor = 0
-        let sortedNumbers = numbers.sorted { $0.lowerBound < $1.lowerBound }
-        let opaque = isolated.filter { span in
-            while numberCursor < sortedNumbers.count, sortedNumbers[numberCursor].upperBound <= span.lowerBound { numberCursor += 1 }
-            return !(numberCursor < sortedNumbers.count && sortedNumbers[numberCursor].overlaps(span))
-        }
+        // The regex runs on the gaps between the opaque runs (`opaque`, sorted and merged: inline
+        // code, autolinks, URLs), each gap's edges taken as boundaries, so a match neither starts in
+        // one nor runs through one.
         var gaps: [Range<String.Index>] = []
         var gapStart = string.startIndex
         var opaqueCursor = 0
@@ -178,10 +174,14 @@ enum MarkdownBidiIsolation {
         }
         guard !matches.isEmpty else { return [] }
         let offsets = characterOffsets(of: matches.flatMap { $0 }, in: string)
-        var candidates: [(whole: Range<Int>, number: Range<Int>, units: [Range<Int>])] = []
+        var candidates: [(whole: Range<Int>, number: Range<Int>, units: [Range<Int>], unitLike: Bool)] = []
         var next = 0
         for match in matches {
-            candidates.append((offsets[next], offsets[next + 1], Array(offsets[(next + 2)..<(next + match.count)])))
+            // A unit is written in one case (`ms`, `GB`, `files`); a capitalised word is a name or
+            // starts a clause (`2024 Apple`), and reads after the number unisolated.
+            let word = string[match[1].upperBound..<match[0].upperBound].dropFirst().prefix { $0.isLetter }
+            let unitLike = word == word.lowercased() || word == word.uppercased()
+            candidates.append((offsets[next], offsets[next + 1], Array(offsets[(next + 2)..<(next + match.count)]), unitLike))
             next += match.count
         }
         var accepted: [(whole: Range<Int>, units: [Range<Int>])] = []
@@ -201,7 +201,7 @@ enum MarkdownBidiIsolation {
                 // Text that writes its own isolates is left as it reads (an FSI resolves from its
                 // first strong letter, which an inner isolate would hide).
                 guard measure.whole.lowerBound == offset, offset >= acceptedEnd, saved.isEmpty,
-                      lastStrong != .leftToRight else { continue }
+                      lastStrong != .leftToRight, measure.unitLike else { continue }
                 if !insideIsolated {
                     accepted.append((measure.whole, measure.units))
                 } else if number < numbers.count, numbers[number].contains(offset),

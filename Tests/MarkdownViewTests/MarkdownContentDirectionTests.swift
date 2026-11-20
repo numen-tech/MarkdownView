@@ -260,6 +260,8 @@ struct MarkdownContentDirectionTests {
         // One phrase, one isolate: the two measures keep their English order.
         #expect(shown("من 2 GB to 4 GB") == "من \u{2066}2\u{00A0}GB to 4\u{00A0}GB\u{2069}")
         #expect(shown("من -5 ms to +5 ms") == "من \u{2066}-5\u{00A0}ms to +5\u{00A0}ms\u{2069}")
+        // A capitalised word after the number is a name or a clause, not a unit.
+        #expect(shown("في عام 2024 Apple أعلنت") == "في عام 2024 Apple أعلنت")
         // Two groups are two numbers: the floor stays out of the files' isolate.
         #expect(shown("في الطابق 3 100 files") == "في الطابق 3 \u{2066}100\u{00A0}files\u{2069}")
         // Text that writes its own isolates is left as written inside them, and W7 resumes after.
@@ -294,6 +296,10 @@ struct MarkdownContentDirectionTests {
         version[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
         let dated = String(MarkdownBidiIsolation.isolated(AttributedString("גרסה ") + version + AttributedString(" results"), layoutDirection: .rightToLeft).characters)
         #expect(dated == "גרסה \u{2066}v2/2024-05-01\u{2069} results")
+        var released = AttributedString("on 2024-05-01")
+        released[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        let ended = String(MarkdownBidiIsolation.isolated(AttributedString("גרסה ") + released + AttributedString(" results"), layoutDirection: .rightToLeft).characters)
+        #expect(ended == "גרסה \u{2066}on 2024-05-01\u{2069} results")
     }
 
     @Test("Left-to-right text is unchanged, measures and phone numbers included", .tags(.rendering))
