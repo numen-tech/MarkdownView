@@ -42,7 +42,6 @@ struct MarkdownContentDirectionTests {
     @Test("A block skips inline code, math and bare links", .tags(.rendering), arguments: [
         ("`git rebase` يعيد كتابة السجل.", LayoutDirection.rightToLeft, false),
         ("$x^2$ هو المربع.", .rightToLeft, true),
-        ("\\(E = mc^2\\) היא הנוסחה.", .rightToLeft, true),
         ("<https://git-scm.com> هو الموقع.", .rightToLeft, false),
         ("[الوثائق](https://git-scm.com) here", .rightToLeft, false),
         ("**Note:** مرحبا", .leftToRight, false),
@@ -154,10 +153,48 @@ struct MarkdownContentDirectionTests {
         #expect(comma == "راجع \u{2066}https://example.com\u{2069}،ثم")
     }
 
-    @Test("Arabic-Indic grouped digits are isolated", .tags(.rendering))
+    #if ENABLE_MATH_RENDERING
+    @Test("A \\(...\\) formula is skipped too", .tags(.rendering))
+    func parenthesizedMath() throws {
+        let block = try #require(document("\\(E = mc^2\\) היא הנוסחה.", math: true).child(at: 0))
+        #expect(MarkdownContentDirection.of(block, skipsMath: true) == .rightToLeft)
+    }
+    #endif
+
+    @Test("Arabic-Indic digit groups are left alone (an isolate would not fix their order)", .tags(.rendering))
     func arabicIndicNumber() {
-        let shown = String(MarkdownBidiIsolation.isolated(AttributedString("الهاتف +٩٦٦ ٥٠ ١٢٣ ٤٥٦٧ الآن"), layoutDirection: .rightToLeft).characters)
-        #expect(shown == "الهاتف \u{2066}+٩٦٦ ٥٠ ١٢٣ ٤٥٦٧\u{2069} الآن")
+        let text = AttributedString("الهاتف +٩٦٦ ٥٠ ١٢٣ ٤٥٦٧ الآن")
+        #expect(MarkdownBidiIsolation.isolated(text, layoutDirection: .rightToLeft) == text)
+    }
+
+    @Test("A phone number beside a date, a URL with parentheses, a URL before a PDI", .tags(.rendering))
+    func runBoundaries() {
+        let both = String(MarkdownBidiIsolation.isolated(AttributedString("اتصل +1 212-555-0123 2026-11-17"), layoutDirection: .rightToLeft).characters)
+        #expect(both == "اتصل \u{2066}+1 212-555-0123\u{2069} \u{2066}2026-11-17\u{2069}")
+        let parens = String(MarkdownBidiIsolation.isolated(AttributedString("راجع https://en.wikipedia.org/wiki/Swift_(language)"), layoutDirection: .rightToLeft).characters)
+        #expect(parens == "راجع \u{2066}https://en.wikipedia.org/wiki/Swift_(language)\u{2069}")
+        #expect(MarkdownContentDirection.firstStrong(inText: "\u{2066}https://x.org\u{2069} שלום", skipsMath: false) == .rightToLeft)
+    }
+
+    @Test("Symbols in right-to-left blocks are neutral, AL ones aside", .tags(.rendering))
+    func rightToLeftBlockSymbols() {
+        #expect(MarkdownContentDirection.firstStrong(in: "\u{0606} 8 equals two") == .leftToRight)
+        #expect(MarkdownContentDirection.firstStrong(in: "\u{FDFD} Chapter") == .leftToRight)
+        #expect(MarkdownContentDirection.firstStrong(in: "\u{FB29} plus") == .leftToRight)
+        #expect(MarkdownContentDirection.firstStrong(in: "\u{060B} 50") == .rightToLeft)
+    }
+
+    @Test("Isolation is decided per paragraph", .tags(.rendering))
+    func perParagraphIsolation() {
+        var code = AttributedString("git status")
+        code[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        var hebrewCode = AttributedString("-1")
+        hebrewCode[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        // An English paragraph with no Hebrew in it: untouched. One with Hebrew words around code:
+        // isolated, even though it reads left to right.
+        let text = AttributedString("Run ") + code + AttributedString(".\n\nAuthor שלום ") + hebrewCode + AttributedString(" עולם")
+        let shown = String(MarkdownBidiIsolation.isolated(text, layoutDirection: .leftToRight).characters)
+        #expect(shown == "Run git status.\n\nAuthor שלום \u{2066}-1\u{2069} עולם")
     }
 
     @Test("A paragraph written left to right in a mixed text gets no isolates", .tags(.rendering))

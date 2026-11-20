@@ -245,14 +245,14 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         MarkdownNodeView {
             MarkdownTableRow(
                 rowIndex: 0,
-                cells: Array(head.cells).map(renderedTableCell)
+                cells: { let direction = tableDirection(of: head); return Array(head.cells).map { renderedTableCell($0, tableDirection: direction) } }()
             )
         }
     }
     
     func visitTableBody(_ body: Markdown.Table.Body) -> MarkdownNodeView {
         MarkdownNodeView {
-            MarkdownTableBody(rows: renderedTableRows(for: body))
+            MarkdownTableBody(rows: renderedTableRows(for: body, tableDirection: tableDirection(of: body)))
         }
     }
     
@@ -260,7 +260,7 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         MarkdownNodeView {
             MarkdownTableRow(
                 rowIndex: row.indexInParent + 1 /* header */,
-                cells: Array(row.cells).map(renderedTableCell)
+                cells: { let direction = tableDirection(of: row); return Array(row.cells).map { renderedTableCell($0, tableDirection: direction) } }()
             )
         }
     }
@@ -278,7 +278,7 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         }
         return MarkdownNodeView(
             cellViews,
-            alignment: cell.horizontalAlignment(tableDirection: cell.table.flatMap(contentDirection(of:)))
+            alignment: cell.horizontalAlignment(tableDirection: tableDirection(of: cell))
         )
     }
     
@@ -388,22 +388,34 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
 
 fileprivate extension MarkdownViewRenderer {
     func renderedTable(for table: Markdown.Table) -> MarkdownTableStyleConfiguration.Table {
-        MarkdownTableStyleConfiguration.Table(
-            headerCells: Array(table.head.cells).map(renderedTableCell),
-            bodyRows: renderedTableRows(for: table.body)
+        // numen fork (gemma4-qat#1765): the table's direction, once per table.
+        let direction = contentDirection(of: table)
+        return MarkdownTableStyleConfiguration.Table(
+            headerCells: Array(table.head.cells).map { renderedTableCell($0, tableDirection: direction) },
+            bodyRows: renderedTableRows(for: table.body, tableDirection: direction)
         )
     }
 
-    func renderedTableRows(for tableBody: Markdown.Table.Body) -> [MarkdownTableStyleConfiguration.Table.Row] {
+    func renderedTableRows(for tableBody: Markdown.Table.Body, tableDirection: LayoutDirection?) -> [MarkdownTableStyleConfiguration.Table.Row] {
         tableBody.rows.map { row in
             MarkdownTableStyleConfiguration.Table.Row(
                 rowIndex: row.indexInParent + 1 /* header */,
-                cells: Array(row.cells).map(renderedTableCell)
+                cells: Array(row.cells).map { renderedTableCell($0, tableDirection: tableDirection) }
             )
         }
     }
 
-    func renderedTableCell(_ cell: Markdown.Table.Cell) -> MarkdownTableStyleConfiguration.Table.Cell {
+    /// The direction of the table `markup` belongs to (a head, body, row or cell visited alone).
+    func tableDirection(of markup: any Markup) -> LayoutDirection? {
+        var element: (any Markup)? = markup
+        while let current = element {
+            if let table = current as? Markdown.Table { return contentDirection(of: table) }
+            element = current.parent
+        }
+        return nil
+    }
+
+    func renderedTableCell(_ cell: Markdown.Table.Cell, tableDirection: LayoutDirection?) -> MarkdownTableStyleConfiguration.Table.Cell {
         let content = MarkdownViewRenderer(
             configuration: configuration,
             mathContext: mathContext,
@@ -412,7 +424,6 @@ fileprivate extension MarkdownViewRenderer {
         .makeBody(for: cell)
         
         // numen fork (gemma4-qat#1765): explicit left/right columns stay physical in an RTL table.
-        let tableDirection = cell.table.flatMap(contentDirection(of:))
         return MarkdownTableStyleConfiguration.Table.Cell(
             horizontalAlignment: cell.horizontalAlignment(tableDirection: tableDirection),
             textAlignment: cell.textAlignment(tableDirection: tableDirection),

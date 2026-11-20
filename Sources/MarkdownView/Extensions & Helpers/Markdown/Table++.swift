@@ -21,19 +21,7 @@ extension Markdown.Table.Cell {
         physicalAlignment(tableDirection: tableDirection).textAlignment
     }
 
-    private func physicalAlignment(tableDirection: LayoutDirection?) -> CellAlignment {
-        guard tableDirection == .rightToLeft, parent is any TableCellContainer,
-              let alignments = table?.columnAlignments, indexInParent < alignments.count
-        else { return cellAlignment }
-        switch alignments[indexInParent] {
-        case .left: return .trailing
-        case .right: return .leading
-        default: return cellAlignment
-        }
-    }
-
-    /// The table this cell belongs to.
-    var table: Markdown.Table? {
+    private var owningTable: Markdown.Table? {
         var element = parent
         while let current = element {
             if let table = current as? Markdown.Table { return table }
@@ -41,7 +29,17 @@ extension Markdown.Table.Cell {
         }
         return nil
     }
-}
+
+    private func physicalAlignment(tableDirection: LayoutDirection?) -> CellAlignment {
+        guard tableDirection == .rightToLeft, parent is any TableCellContainer,
+              let alignments = owningTable?.columnAlignments, indexInParent < alignments.count
+        else { return cellAlignment }
+        switch alignments[indexInParent] {
+        case .left: return .trailing
+        case .right: return .leading
+        default: return cellAlignment
+        }
+    }}
 
 private extension Markdown.Table.Cell {
     var cellAlignment: CellAlignment {

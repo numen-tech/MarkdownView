@@ -46,6 +46,7 @@ fileprivate struct MarkdownTableCellStylingViewModifier: ViewModifier {
                         ForEach(styleCollection.rows) { row in
                             if let backgroundStyle = row.backgroundStyle {
                                 resolveShape(row.backgroundShape, style: backgroundStyle)
+                                    .environment(\.layoutDirection, layoutDirection)
                                     .offset(styleCollection.offset(for: row.position))
                                     .frame(height: styleCollection.heights[row.position.row])
                                     .frame(maxWidth: .infinity)
@@ -66,6 +67,7 @@ fileprivate struct MarkdownTableCellStylingViewModifier: ViewModifier {
                         ForEach(styleCollection.cells) { cell in
                             if let backgroundStyle = cell.backgroundStyle {
                                 resolveShape(cell.backgroundShape, style: backgroundStyle)
+                                    .environment(\.layoutDirection, layoutDirection)
                                     .offset(styleCollection.offset(for: cell.position))
                                     .frame(
                                         width: styleCollection.widths[cell.position.column],

@@ -51,6 +51,13 @@ public enum MarkdownContentDirection {
             switch scalar.properties.generalCategory {
             case .nonspacingMark, .enclosingMark, .spacingMark, .decimalNumber, .format, .spaceSeparator:
                 return nil
+            case .mathSymbol, .otherSymbol, .currencySymbol, .modifierSymbol:
+                // Mostly ON or ES (`؆`, the Hebrew alternative plus sign, the bismillah ligature);
+                // the Arabic ray, the afghani sign, the two Sindhi signs and the rial sign are AL.
+                switch scalar.value {
+                case 0x0608, 0x060B, 0x06FD, 0x06FE, 0xFDFC: return .rightToLeft
+                default: return nil
+                }
             default:
                 break
             }
