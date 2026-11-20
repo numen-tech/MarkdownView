@@ -64,6 +64,28 @@ struct MarkdownNodeView: View {
         return node
     }
     
+    /// numen fork (gemma4-qat#1765): text nodes joined into one text, as one `Text` lays them out.
+    /// Text blocks of different directions keep theirs as paragraph attributes (writing direction
+    /// and the physical alignment it reads from), so their spacing stays the blank line it was;
+    /// text blocks that agree (or have no direction) are joined exactly as before. The result
+    /// takes the first direction among them.
+    static func mergedText(_ nodes: [MarkdownNodeView], separator: String) -> MarkdownNodeView? {
+        let directions = nodes.compactMap(\.direction)
+        let mixed = Set(directions).count > 1
+        var merged = AttributedString()
+        for node in nodes {
+            guard var text = node.asAttributedString else { continue }
+            if !merged.characters.isEmpty { merged += AttributedString(separator) }
+            if mixed, let direction = node.direction {
+                text.writingDirection = direction == .rightToLeft ? .rightToLeft : .leftToRight
+                text.alignment = direction == .rightToLeft ? .right : .left
+            }
+            merged += text
+        }
+        guard !merged.characters.isEmpty else { return nil }
+        return MarkdownNodeView(merged).withDirection(directions.first)
+    }
+
     var asAttributedString: AttributedString? {
         if case let .left(attributedString) = storage {
             return attributedString
@@ -87,35 +109,24 @@ extension MarkdownNodeView {
         layoutPolicy: LayoutPolicy = .adaptive
     ) {
         var composedContents = [MarkdownNodeView]()
-        var attributedString = AttributedString()
-        // numen fork (gemma4-qat#1765): blocks merge into one text only while their directions
-        // agree (a block with none joins its neighbour); inline nodes carry none.
-        var textDirection: LayoutDirection?
+        // Adjacent text nodes, merged into one text when a view or the end interrupts them.
+        var pendingText: [MarkdownNodeView] = []
+        func flushText() {
+            guard !pendingText.isEmpty else { return }
+            if let merged = Self.mergedText(pendingText, separator: layoutPolicy == .linebreak ? "\n\n" : "") {
+                composedContents.append(merged)
+            }
+            pendingText = []
+        }
         for content in contents {
-            if case let .left(text) = content.storage {
-                if layoutPolicy == .linebreak, !attributedString.characters.isEmpty,
-                   let direction = content.direction, let current = textDirection, direction != current {
-                    composedContents.append(MarkdownNodeView(attributedString).withDirection(textDirection))
-                    attributedString = AttributedString()
-                    textDirection = nil
-                }
-                if layoutPolicy == .linebreak && !attributedString.characters.isEmpty {
-                    attributedString += "\n\n"
-                }
-                attributedString += text
-                textDirection = textDirection ?? content.direction
+            if content.asAttributedString != nil {
+                pendingText.append(content)
             } else {
-                if !attributedString.characters.isEmpty {
-                    composedContents.append(MarkdownNodeView(attributedString).withDirection(textDirection))
-                    attributedString = AttributedString()
-                    textDirection = nil
-                }
+                flushText()
                 composedContents.append(content)
             }
         }
-        if !attributedString.characters.isEmpty {
-            composedContents.append(MarkdownNodeView(attributedString).withDirection(textDirection))
-        }
+        flushText()
         
         if composedContents.count == 1 {
             if let attributedString = composedContents[0].asAttributedString {

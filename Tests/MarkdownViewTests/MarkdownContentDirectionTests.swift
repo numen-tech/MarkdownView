@@ -57,8 +57,8 @@ struct MarkdownContentDirectionTests {
         #expect(directions == [.rightToLeft, .leftToRight, .rightToLeft, .leftToRight])
     }
 
-    @Test("Text blocks merge only while their directions agree", .tags(.rendering))
-    func mergeRule() {
+    @Test("Text blocks of different directions keep theirs as paragraph attributes", .tags(.rendering))
+    func mergeRule() throws {
         let english = MarkdownNodeView("One.").withDirection(.leftToRight)
         let neutral = MarkdownNodeView("42").withDirection(nil)
         let arabic = MarkdownNodeView("مرحبا").withDirection(.rightToLeft)
@@ -72,8 +72,20 @@ struct MarkdownContentDirectionTests {
         #expect(rtlFirstNeutral.contentType == .text)
         #expect(rtlFirstNeutral.direction == .rightToLeft)
 
+        // Mixed directions stay one text (the blank line between them unchanged), each paragraph
+        // carrying its own direction and alignment.
         let mixed = MarkdownNodeView([english, arabic], layoutPolicy: .linebreak)
-        #expect(mixed.contentType == .view)
+        let text = try #require(mixed.asAttributedString)
+        #expect(String(text.characters) == "One.\n\nمرحبا")
+        #expect(mixed.direction == .leftToRight)
+        let arabicRun = try #require(text.runs.first { String(text[$0.range].characters).contains("مرحبا") })
+        #expect(arabicRun.writingDirection == .rightToLeft)
+        #expect(arabicRun.alignment == .right)
+        let englishRun = try #require(text.runs.first { String(text[$0.range].characters).contains("One.") })
+        #expect(englishRun.alignment == .left)
+
+        // Agreeing blocks get no paragraph attributes: they lay out exactly as before.
+        #expect(same.asAttributedString?.runs.allSatisfy { $0.alignment == nil } == true)
 
         // Inline pieces of one paragraph keep merging whatever they hold.
         let inline = MarkdownNodeView([MarkdownNodeView("abc "), MarkdownNodeView("مرحبا")])
