@@ -15,6 +15,9 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
     var mathContext: MarkdownMathContext?
     var elementRenderers: [MarkdownElementRendererRegistration]
     private var activeInlineIntent: InlinePresentationIntent = []
+    /// numen fork (gemma4-qat#1765): the direction of the table a cell renders in, set by
+    /// `renderedTableCell`, which already has it. Nil means a cell visited alone, which finds it.
+    var resolvedTableDirection: LayoutDirection?? = nil
     
     init(
         configuration: MarkdownRendererConfiguration,
@@ -278,7 +281,7 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         }
         return MarkdownNodeView(
             cellViews,
-            alignment: cell.horizontalAlignment(tableDirection: tableDirection(of: cell))
+            alignment: cell.horizontalAlignment(tableDirection: resolvedTableDirection ?? tableDirection(of: cell))
         )
     }
     
@@ -386,6 +389,14 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
     }
 }
 
+#if DEBUG
+extension MarkdownViewRenderer {
+    /// Test seam (gemma4-qat#1765): how many times a table's direction was looked up from one of
+    /// its parts rather than handed down.
+    nonisolated(unsafe) static var tableDirectionScans = 0
+}
+#endif
+
 fileprivate extension MarkdownViewRenderer {
     func renderedTable(for table: Markdown.Table) -> MarkdownTableStyleConfiguration.Table {
         // numen fork (gemma4-qat#1765): the table's direction, once per table.
@@ -407,6 +418,9 @@ fileprivate extension MarkdownViewRenderer {
 
     /// The direction of the table `markup` belongs to (a head, body, row or cell visited alone).
     func tableDirection(of markup: any Markup) -> LayoutDirection? {
+        #if DEBUG
+        MarkdownViewRenderer.tableDirectionScans += 1
+        #endif
         var element: (any Markup)? = markup
         while let current = element {
             if let table = current as? Markdown.Table { return contentDirection(of: table) }
@@ -416,12 +430,15 @@ fileprivate extension MarkdownViewRenderer {
     }
 
     func renderedTableCell(_ cell: Markdown.Table.Cell, tableDirection: LayoutDirection?) -> MarkdownTableStyleConfiguration.Table.Cell {
-        let content = MarkdownViewRenderer(
+        var renderer = MarkdownViewRenderer(
             configuration: configuration,
             mathContext: mathContext,
             elementRenderers: elementRenderers
         )
-        .makeBody(for: cell)
+        // numen fork (gemma4-qat#1765): hand the cell its table's direction, so the cell does
+        // not rescan the whole table (quadratic in the cell count for a numeric table).
+        renderer.resolvedTableDirection = .some(tableDirection)
+        let content = renderer.makeBody(for: cell)
         
         // numen fork (gemma4-qat#1765): explicit left/right columns stay physical in an RTL table.
         return MarkdownTableStyleConfiguration.Table.Cell(

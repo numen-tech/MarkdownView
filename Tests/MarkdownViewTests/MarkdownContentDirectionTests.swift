@@ -114,6 +114,22 @@ struct MarkdownContentDirectionTests {
         #expect(inline.contentType == .text)
     }
 
+    @Test("A table's cells take its resolved direction instead of rescanning it", .tags(.rendering))
+    func tableDirectionOncePerTable() throws {
+        let rows = (1...40).map { "| \($0) | \($0 * 7) | \($0 * 13) |" }.joined(separator: "\n")
+        let markdown = "| a1 | b2 | c3 |\n|:---|---:|:---:|\n" + rows + "\n| | | مرحبا |"
+        let table = try #require(document(markdown).child(at: 0) as? Markdown.Table)
+        var renderer = MarkdownViewRenderer(configuration: MarkdownRendererConfiguration(), mathContext: nil, elementRenderers: [])
+        let before = MarkdownViewRenderer.tableDirectionScans
+        _ = renderer.visit(table)
+        #expect(MarkdownViewRenderer.tableDirectionScans == before)
+        // A cell visited alone still finds its table's direction.
+        let cell = try #require(table.head.child(at: 0))
+        var lone = MarkdownViewRenderer(configuration: MarkdownRendererConfiguration(), mathContext: nil, elementRenderers: [])
+        _ = lone.visit(cell)
+        #expect(MarkdownViewRenderer.tableDirectionScans == before + 1)
+    }
+
     // MARK: Isolates
 
     @Test("Inline code, URLs and grouped numbers are isolated in right-to-left text", .tags(.rendering))
