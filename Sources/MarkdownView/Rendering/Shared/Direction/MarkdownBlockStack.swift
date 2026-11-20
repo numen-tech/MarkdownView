@@ -46,13 +46,20 @@ struct MarkdownBlockStackLayout: Layout {
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        // Each block gets the stack's width as its proposal, as a `VStack` gives it, and sizes
+        // itself within it; proposing a block exactly its measured size can lay it out narrower
+        // (a table's column wraps) and taller than measured.
+        let proposal = ProposedViewSize(width: bounds.width, height: nil)
         var y = bounds.minY
         for (index, subview) in subviews.enumerated() {
-            let size = subview.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+            let height = subview.sizeThatFits(proposal).height
             let trailing = index < farSide.count && farSide[index]
-            let x = trailing ? bounds.maxX - size.width : bounds.minX
-            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(width: size.width, height: size.height))
-            y += size.height + spacing
+            subview.place(
+                at: CGPoint(x: trailing ? bounds.maxX : bounds.minX, y: y),
+                anchor: trailing ? .topTrailing : .topLeading,
+                proposal: proposal
+            )
+            y += height + spacing
         }
     }
 }
