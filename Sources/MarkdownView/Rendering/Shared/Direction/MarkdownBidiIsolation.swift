@@ -140,19 +140,27 @@ enum MarkdownBidiIsolation {
     static func keptTogether(
         _ slice: AttributedSubstring, from offset: Int, unbroken: [Range<Int>], cursor: inout Int
     ) -> AttributedString {
-        var piece = AttributedString(slice)
-        var spaces: [Int] = []
-        for (position, character) in piece.characters.enumerated() where character == " " {
-            let at = offset + position
-            while cursor < unbroken.count, unbroken[cursor].upperBound <= at { cursor += 1 }
-            if cursor < unbroken.count, unbroken[cursor].contains(at) { spaces.append(position) }
+        // One forward pass: the text between replaced spaces is copied as slices, so a long
+        // grouped number costs one walk, not one walk per space.
+        var piece = AttributedString()
+        var copied = slice.startIndex
+        var index = slice.startIndex
+        var at = offset
+        while index < slice.endIndex {
+            let after = slice.characters.index(after: index)
+            if slice.characters[index] == " " {
+                while cursor < unbroken.count, unbroken[cursor].upperBound <= at { cursor += 1 }
+                if cursor < unbroken.count, unbroken[cursor].contains(at) {
+                    piece += slice[copied..<index]
+                    let attributes = slice[index..<after].runs.first?.attributes ?? AttributeContainer()
+                    piece += AttributedString(String(noBreakSpace), attributes: attributes)
+                    copied = after
+                }
+            }
+            index = after
+            at += 1
         }
-        for position in spaces.reversed() {
-            let index = piece.characters.index(piece.startIndex, offsetBy: position)
-            let after = piece.characters.index(after: index)
-            let attributes = piece[index..<after].runs.first?.attributes ?? AttributeContainer()
-            piece.replaceSubrange(index..<after, with: AttributedString(String(noBreakSpace), attributes: attributes))
-        }
+        piece += slice[copied..<slice.endIndex]
         return piece
     }
 
@@ -395,10 +403,12 @@ enum MarkdownBidiIsolation {
         return url.matches(in: string, range: NSRange(string.startIndex..., in: string)).compactMap { match in
             guard var range = Range(match.range, in: string) else { return nil }
             // A closing parenthesis that balances one in the URL belongs to it
-            // (`https://en.wikipedia.org/wiki/Swift_(programming_language)`).
-            while range.upperBound < string.endIndex, string[range.upperBound] == ")",
-                  string[range].filter({ $0 == "(" }).count > string[range].filter({ $0 == ")" }).count {
+            // (`https://en.wikipedia.org/wiki/Swift_(programming_language)`). Counted once, then
+            // kept up to date, so a run of them is one walk.
+            var open = string[range].reduce(0) { $0 + ($1 == "(" ? 1 : $1 == ")" ? -1 : 0) }
+            while open > 0, range.upperBound < string.endIndex, string[range.upperBound] == ")" {
                 range = range.lowerBound..<string.index(after: range.upperBound)
+                open -= 1
             }
             return range
         }
@@ -460,9 +470,10 @@ enum MarkdownBidiIsolation {
 
     /// A URL with a scheme or `www.`, without the sentence punctuation after it.
     /// A URL never runs across a paragraph separator (bidi class B: `\s` misses U+001C-U+001E),
-    /// so matching resumes after one at the next URL.
+    /// so matching resumes after one at the next URL. A scheme starts a token (the lookbehind):
+    /// without it the scheme part was retried from every letter of a long word, quadratic in it.
     private static let url = try! NSRegularExpression(
-        pattern: #"(?:[a-zA-Z][a-zA-Z0-9+.\-]*://|www\.)[^\s<>"،؛؟\x{200E}\x{200F}\x{2066}-\x{2069}\x{0A}\x{0D}\x{1C}-\x{1E}\x{85}\x{2029}]*[^\s<>".,:;!?'’”)\]،؛؟\x{200E}\x{200F}\x{2066}-\x{2069}\x{0A}\x{0D}\x{1C}-\x{1E}\x{85}\x{2029}]"#
+        pattern: #"(?:(?<![a-zA-Z0-9+.\-])[a-zA-Z][a-zA-Z0-9+.\-]*://|www\.)[^\s<>"،؛؟\x{200E}\x{200F}\x{2066}-\x{2069}\x{0A}\x{0D}\x{1C}-\x{1E}\x{85}\x{2029}]*[^\s<>".,:;!?'’”)\]،؛؟\x{200E}\x{200F}\x{2066}-\x{2069}\x{0A}\x{0D}\x{1C}-\x{1E}\x{85}\x{2029}]"#
     )
 
     /// An ISO date, `2026-11-17`. (ASCII digits only here and in `number`: Arabic-Indic digit

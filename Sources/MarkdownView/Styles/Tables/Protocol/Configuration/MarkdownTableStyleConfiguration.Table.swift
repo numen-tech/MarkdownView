@@ -44,19 +44,37 @@ extension MarkdownTableStyleConfiguration.Table {
     struct Cell {
         var horizontalAlignment: HorizontalAlignment
         var textAlignment: TextAlignment
+        /// numen fork (gemma4-qat#1765): the alignment in a right-to-left table, where an explicit
+        /// `:---` / `---:` column keeps its physical side. The row picks by the direction the
+        /// table actually lays out in, its own or the one it inherits (a numeric table in an
+        /// Arabic block quote), which only the view knows.
+        var rightToLeftHorizontalAlignment: HorizontalAlignment
+        var rightToLeftTextAlignment: TextAlignment
         var colspan: Int
         var content: AnyView
 
         init(
             horizontalAlignment: HorizontalAlignment,
             textAlignment: TextAlignment,
+            rightToLeftHorizontalAlignment: HorizontalAlignment? = nil,
+            rightToLeftTextAlignment: TextAlignment? = nil,
             colspan: Int,
             content: some View
         ) {
             self.horizontalAlignment = horizontalAlignment
             self.textAlignment = textAlignment
+            self.rightToLeftHorizontalAlignment = rightToLeftHorizontalAlignment ?? horizontalAlignment
+            self.rightToLeftTextAlignment = rightToLeftTextAlignment ?? textAlignment
             self.colspan = colspan
             self.content = AnyView(content)
+        }
+
+        func horizontalAlignment(in direction: LayoutDirection) -> HorizontalAlignment {
+            direction == .rightToLeft ? rightToLeftHorizontalAlignment : horizontalAlignment
+        }
+
+        func textAlignment(in direction: LayoutDirection) -> TextAlignment {
+            direction == .rightToLeft ? rightToLeftTextAlignment : textAlignment
         }
     }
 }

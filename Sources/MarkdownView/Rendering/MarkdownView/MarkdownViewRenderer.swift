@@ -15,9 +15,6 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
     var mathContext: MarkdownMathContext?
     var elementRenderers: [MarkdownElementRendererRegistration]
     private var activeInlineIntent: InlinePresentationIntent = []
-    /// numen fork (gemma4-qat#1765): the direction of the table a cell renders in, set by
-    /// `renderedTableCell`, which already has it. Nil means a cell visited alone, which finds it.
-    var resolvedTableDirection: LayoutDirection?? = nil
     
     init(
         configuration: MarkdownRendererConfiguration,
@@ -248,14 +245,14 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         MarkdownNodeView {
             MarkdownTableRow(
                 rowIndex: 0,
-                cells: { let direction = tableDirection(of: head); return Array(head.cells).map { renderedTableCell($0, tableDirection: direction) } }()
+                cells: Array(head.cells).map { renderedTableCell($0) }
             )
         }
     }
     
     func visitTableBody(_ body: Markdown.Table.Body) -> MarkdownNodeView {
         MarkdownNodeView {
-            MarkdownTableBody(rows: renderedTableRows(for: body, tableDirection: tableDirection(of: body)))
+            MarkdownTableBody(rows: renderedTableRows(for: body))
         }
     }
     
@@ -263,7 +260,7 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         MarkdownNodeView {
             MarkdownTableRow(
                 rowIndex: row.indexInParent + 1 /* header */,
-                cells: { let direction = tableDirection(of: row); return Array(row.cells).map { renderedTableCell($0, tableDirection: direction) } }()
+                cells: Array(row.cells).map { renderedTableCell($0) }
             )
         }
     }
@@ -279,10 +276,9 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
             let cellView = renderer.visit(child)
             cellViews.append(cellView)
         }
-        return MarkdownNodeView(
-            cellViews,
-            alignment: cell.horizontalAlignment(tableDirection: resolvedTableDirection ?? tableDirection(of: cell))
-        )
+        // The cell's column alignment is applied by `MarkdownTableRow`, in the direction the
+        // table lays out in.
+        return MarkdownNodeView(cellViews)
     }
     
     func visitParagraph(_ paragraph: Paragraph) -> MarkdownNodeView {
@@ -389,61 +385,39 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
     }
 }
 
-#if DEBUG
 extension MarkdownViewRenderer {
-    /// Test seam (gemma4-qat#1765): how many times a table's direction was looked up from one of
-    /// its parts rather than handed down.
-    nonisolated(unsafe) static var tableDirectionScans = 0
-}
-#endif
-
-fileprivate extension MarkdownViewRenderer {
     func renderedTable(for table: Markdown.Table) -> MarkdownTableStyleConfiguration.Table {
-        // numen fork (gemma4-qat#1765): the table's direction, once per table.
-        let direction = contentDirection(of: table)
-        return MarkdownTableStyleConfiguration.Table(
-            headerCells: Array(table.head.cells).map { renderedTableCell($0, tableDirection: direction) },
-            bodyRows: renderedTableRows(for: table.body, tableDirection: direction)
+        MarkdownTableStyleConfiguration.Table(
+            headerCells: Array(table.head.cells).map { renderedTableCell($0) },
+            bodyRows: renderedTableRows(for: table.body)
         )
     }
 
-    func renderedTableRows(for tableBody: Markdown.Table.Body, tableDirection: LayoutDirection?) -> [MarkdownTableStyleConfiguration.Table.Row] {
+    fileprivate func renderedTableRows(for tableBody: Markdown.Table.Body) -> [MarkdownTableStyleConfiguration.Table.Row] {
         tableBody.rows.map { row in
             MarkdownTableStyleConfiguration.Table.Row(
                 rowIndex: row.indexInParent + 1 /* header */,
-                cells: Array(row.cells).map { renderedTableCell($0, tableDirection: tableDirection) }
+                cells: Array(row.cells).map { renderedTableCell($0) }
             )
         }
     }
 
-    /// The direction of the table `markup` belongs to (a head, body, row or cell visited alone).
-    func tableDirection(of markup: any Markup) -> LayoutDirection? {
-        #if DEBUG
-        MarkdownViewRenderer.tableDirectionScans += 1
-        #endif
-        var element: (any Markup)? = markup
-        while let current = element {
-            if let table = current as? Markdown.Table { return contentDirection(of: table) }
-            element = current.parent
-        }
-        return nil
-    }
-
-    func renderedTableCell(_ cell: Markdown.Table.Cell, tableDirection: LayoutDirection?) -> MarkdownTableStyleConfiguration.Table.Cell {
+    fileprivate func renderedTableCell(_ cell: Markdown.Table.Cell) -> MarkdownTableStyleConfiguration.Table.Cell {
         var renderer = MarkdownViewRenderer(
             configuration: configuration,
             mathContext: mathContext,
             elementRenderers: elementRenderers
         )
-        // numen fork (gemma4-qat#1765): hand the cell its table's direction, so the cell does
-        // not rescan the whole table (quadratic in the cell count for a numeric table).
-        renderer.resolvedTableDirection = .some(tableDirection)
         let content = renderer.makeBody(for: cell)
         
         // numen fork (gemma4-qat#1765): explicit left/right columns stay physical in an RTL table.
+        // Both alignments go to the row, which picks by the direction the table lays out in: its
+        // own, or inherited when it has no strong letter (a numeric table in an Arabic quote).
         return MarkdownTableStyleConfiguration.Table.Cell(
-            horizontalAlignment: cell.horizontalAlignment(tableDirection: tableDirection),
-            textAlignment: cell.textAlignment(tableDirection: tableDirection),
+            horizontalAlignment: cell.horizontalAlignment(tableDirection: .leftToRight),
+            textAlignment: cell.textAlignment(tableDirection: .leftToRight),
+            rightToLeftHorizontalAlignment: cell.horizontalAlignment(tableDirection: .rightToLeft),
+            rightToLeftTextAlignment: cell.textAlignment(tableDirection: .rightToLeft),
             colspan: Int(cell.colspan),
             content: content
         )

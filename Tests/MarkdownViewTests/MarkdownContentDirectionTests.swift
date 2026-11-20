@@ -118,24 +118,49 @@ struct MarkdownContentDirectionTests {
         #expect(inline.contentType == .text)
     }
 
-    // The scan counter is a DEBUG-only seam, so a Release test build compiles without this test.
-    #if DEBUG
-    @Test("A table's cells take its resolved direction instead of rescanning it", .tags(.rendering))
-    func tableDirectionOncePerTable() throws {
-        let rows = (1...40).map { "| \($0) | \($0 * 7) | \($0 * 13) |" }.joined(separator: "\n")
-        let markdown = "| a1 | b2 | c3 |\n|:---|---:|:---:|\n" + rows + "\n| | | مرحبا |"
-        let table = try #require(document(markdown).child(at: 0) as? Markdown.Table)
-        var renderer = MarkdownViewRenderer(configuration: MarkdownRendererConfiguration(), mathContext: nil, elementRenderers: [])
-        let before = MarkdownViewRenderer.tableDirectionScans
-        _ = renderer.visit(table)
-        #expect(MarkdownViewRenderer.tableDirectionScans == before)
-        // A cell visited alone still finds its table's direction.
-        let cell = try #require(table.head.child(at: 0))
-        var lone = MarkdownViewRenderer(configuration: MarkdownRendererConfiguration(), mathContext: nil, elementRenderers: [])
-        _ = lone.visit(cell)
-        #expect(MarkdownViewRenderer.tableDirectionScans == before + 1)
+    @Test("A table's cells carry their alignment for both directions; the row picks", .tags(.rendering))
+    func tableCellAlignmentsForBothDirections() throws {
+        // A numeric table in an Arabic block quote has no direction of its own and lays out in
+        // the quote's, which only the view knows (Codex P2 on numen-tech/MarkdownView#8).
+        let quote = try #require(document("> مرحبا\n>\n> | 1 | 2 | 3 |\n> |:---|---:|:---:|\n> | 4 | 5 | 6 |").child(at: 0) as? BlockQuote)
+        let table = try #require(quote.children.compactMap { $0 as? Markdown.Table }.first)
+        let renderer = MarkdownViewRenderer(configuration: MarkdownRendererConfiguration(), mathContext: nil, elementRenderers: [])
+        #expect(renderer.contentDirection(of: table) == nil)
+        #expect(renderer.contentDirection(of: quote) == .rightToLeft)
+        let cells = renderer.renderedTable(for: table).headerCells
+        #expect(cells.map { $0.horizontalAlignment(in: .leftToRight) } == [.leading, .trailing, .center])
+        #expect(cells.map { $0.horizontalAlignment(in: .rightToLeft) } == [.trailing, .leading, .center])
+        #expect(cells.map { $0.textAlignment(in: .rightToLeft) } == [.trailing, .leading, .center])
     }
-    #endif
+
+    @Test("A scheme is matched from a word's start: a long word before a URL stays linear", .tags(.rendering))
+    func urlScanLinear() {
+        let text = String(repeating: "a", count: 20_000) + " www.example.com مرحبا https://x.org/(a)) b"
+        let clock = ContinuousClock()
+        var found: [String] = []
+        let elapsed = clock.measure { found = MarkdownBidiIsolation.urlRanges(in: text).map { String(text[$0]) } }
+        #expect(found == ["www.example.com", "https://x.org/(a)"])
+        // Retried from every letter, 10 000 letters took 1.4 s and 40 000 took 23 s (M3 Max); from
+        // a word's start, 40 000 take 5 ms.
+        #expect(elapsed < .seconds(1))
+    }
+
+    @Test("A long grouped number's spaces are kept together in one pass", .tags(.rendering))
+    func keptTogetherLinear() {
+        let groups = 8_000
+        let number = (0..<groups).map { _ in "123" }.joined(separator: " ")
+        let text = AttributedString("مرحبا " + number)
+        let clock = ContinuousClock()
+        var shown = AttributedString()
+        let elapsed = clock.measure { shown = MarkdownBidiIsolation.isolated(text, layoutDirection: .rightToLeft) }
+        let characters = String(shown.characters)
+        #expect(characters.filter { $0 == "\u{00A0}" }.count == groups - 1)
+        #expect(characters.hasPrefix("مرحبا \u{2066}123\u{00A0}123"))
+        // Codex measured the per-space rewrite quadratic on Linux (4 000 groups, 5 s); Apple's
+        // AttributedString kept it near linear (8 000 groups, 0.11 s on an M3 Max either way), so
+        // this pins the output and a bound rather than telling the two apart on a Mac.
+        #expect(elapsed < .seconds(1))
+    }
 
     @Test("Isolate depth carries across inline markup within a block, and resets per block", .tags(.rendering), arguments: [
         ("\u{2067}**مرحبا**\u{2069} hello", LayoutDirection.leftToRight),
