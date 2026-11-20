@@ -38,9 +38,9 @@ enum MarkdownBidiIsolation {
         var tagged = characterOffsets(of: taggedRanges, in: text.characters)
         tagged.sort { $0.lowerBound < $1.lowerBound }
         var spans = tagged
-        // The found numbers, dates and measures (`1 ms`), whose spaces become no-break spaces in
-        // the display, so a line never breaks inside one (gemma4-qat#1986).
-        var unbroken: [Range<Int>] = []
+        // The found numbers and dates, and each measure's number and first word (`1 ms`), whose
+        // spaces show as no-break spaces, so a line never breaks inside one (gemma4-qat#1986).
+        var found: [Range<Int>] = []
         var next = 0
         let runs = leftToRightRuns(in: string).sorted { $0.range.lowerBound < $1.range.lowerBound }
         for (run, span) in zip(runs, characterOffsets(of: runs.map(\.range), in: string)) {
@@ -49,10 +49,16 @@ enum MarkdownBidiIsolation {
                 while next < tagged.count, tagged[next].upperBound <= span.lowerBound { next += 1 }
                 if next < tagged.count, tagged[next].overlaps(span) { continue }
             } else {
-                unbroken.append(span)
+                found.append(span)
             }
             spans.append(span)
         }
+        for measure in acceptedMeasures(in: string, isolated: merge(spans)) {
+            spans.append(measure.whole)
+            found.append(measure.unit)
+        }
+        let unbroken = outside(found.sorted { $0.lowerBound < $1.lowerBound }, tagged)
+        var unbrokenCursor = 0
         let merged = merge(spans)
         guard !merged.isEmpty else { return text }
         let paragraphs = paragraphRanges(in: string)
@@ -79,7 +85,7 @@ enum MarkdownBidiIsolation {
             let end = advance(to: span.upperBound)
             let last = text.characters.index(before: end)
             result += AttributedString(String(isolateStart), attributes: text[start..<text.characters.index(after: start)].runs.first?.attributes ?? AttributeContainer())
-            result += keptTogether(text[start..<end], from: span.lowerBound, unbroken: unbroken)
+            result += keptTogether(text[start..<end], from: span.lowerBound, unbroken: unbroken, cursor: &unbrokenCursor)
             result += AttributedString(String(isolateEnd), attributes: text[last..<end].runs.first?.attributes ?? AttributeContainer())
             index = end
         }
@@ -89,15 +95,17 @@ enum MarkdownBidiIsolation {
 
     /// `slice` (starting at character offset `offset`), with each space inside an `unbroken` range
     /// replaced by a no-break space of the same attributes: one character for one, so the offsets
-    /// after it hold.
-    static func keptTogether(_ slice: AttributedSubstring, from offset: Int, unbroken: [Range<Int>]) -> AttributedString {
+    /// after it hold. `unbroken` is sorted and `cursor` walks it across calls made in order.
+    static func keptTogether(
+        _ slice: AttributedSubstring, from offset: Int, unbroken: [Range<Int>], cursor: inout Int
+    ) -> AttributedString {
         var piece = AttributedString(slice)
-        let end = offset + piece.characters.count
-        let spaces = piece.characters.enumerated().compactMap { position, character -> Int? in
+        var spaces: [Int] = []
+        for (position, character) in piece.characters.enumerated() where character == " " {
             let at = offset + position
-            return character == " " && unbroken.contains(where: { $0.contains(at) }) ? position : nil
+            while cursor < unbroken.count, unbroken[cursor].upperBound <= at { cursor += 1 }
+            if cursor < unbroken.count, unbroken[cursor].contains(at) { spaces.append(position) }
         }
-        guard !spaces.isEmpty, offset < end else { return piece }
         for position in spaces.reversed() {
             let index = piece.characters.index(piece.startIndex, offsetBy: position)
             let after = piece.characters.index(after: index)
@@ -105,6 +113,60 @@ enum MarkdownBidiIsolation {
             piece.replaceSubrange(index..<after, with: AttributedString(String(noBreakSpace), attributes: attributes))
         }
         return piece
+    }
+
+    /// `ranges` (sorted) less those wholly inside one of `within` (sorted): a number inside inline
+    /// code keeps the code's own spaces. One that crosses a code span's edge is kept.
+    static func outside(_ ranges: [Range<Int>], _ within: [Range<Int>]) -> [Range<Int>] {
+        var cursor = 0
+        return ranges.filter { range in
+            while cursor < within.count, within[cursor].upperBound <= range.lowerBound { cursor += 1 }
+            return !(cursor < within.count && within[cursor].lowerBound <= range.lowerBound
+                && range.upperBound <= within[cursor].upperBound)
+        }
+    }
+
+    /// The measures of `string` (`measure`) that get an isolate, as character offsets: the whole
+    /// match, and its number and first word, which never break. One forward walk keeps the last
+    /// strong direction outside the runs already isolated (`isolated`, sorted and merged, and the
+    /// measures taken so far), reset at each newline. A measure after a left-to-right letter is
+    /// left alone: there rule W7 already gives the number the word's direction and the phrase is
+    /// one run, which an isolate would split (`the value 10 GB`). A measure that starts inside an
+    /// isolated run belongs to it (inline code, a URL, a phone number).
+    static func acceptedMeasures(in string: String, isolated: [Range<Int>]) -> [(whole: Range<Int>, unit: Range<Int>)] {
+        guard string.contains(where: { $0.isASCII && $0.isNumber }) else { return [] }
+        let matches = measure.matches(in: string, range: NSRange(string.startIndex..., in: string)).compactMap {
+            match -> (whole: Range<String.Index>, unit: Range<String.Index>)? in
+            guard let whole = Range(match.range, in: string), let unit = Range(match.range(at: 1), in: string) else { return nil }
+            return (whole, unit)
+        }
+        guard !matches.isEmpty else { return [] }
+        let offsets = characterOffsets(of: matches.flatMap { [$0.whole, $0.unit] }, in: string)
+        let candidates = matches.indices.map { (whole: offsets[2 * $0], unit: offsets[2 * $0 + 1]) }
+        var accepted: [(whole: Range<Int>, unit: Range<Int>)] = []
+        var lastStrong: LayoutDirection?
+        var skip = 0
+        var candidate = 0
+        var acceptedEnd = 0
+        for (offset, character) in string.enumerated() {
+            while skip < isolated.count, isolated[skip].upperBound <= offset { skip += 1 }
+            let insideIsolated = skip < isolated.count && isolated[skip].contains(offset)
+            while candidate < candidates.count, candidates[candidate].whole.lowerBound <= offset {
+                let measure = candidates[candidate]
+                candidate += 1
+                guard measure.whole.lowerBound == offset, offset >= acceptedEnd, !insideIsolated,
+                      lastStrong != .leftToRight else { continue }
+                accepted.append(measure)
+                acceptedEnd = measure.whole.upperBound
+            }
+            if character.isNewline {
+                lastStrong = nil
+            } else if !insideIsolated, offset >= acceptedEnd,
+                      let direction = character.unicodeScalars.lazy.compactMap(MarkdownContentDirection.strongDirection(of:)).first {
+                lastStrong = direction
+            }
+        }
+        return accepted
     }
 
     static let noBreakSpace: Character = "\u{00A0}"
@@ -147,16 +209,7 @@ enum MarkdownBidiIsolation {
             guard let range = Range(match.range, in: string) else { return nil }
             return string[range].filter({ $0.isASCII && $0.isNumber }).count >= 6 ? range : nil
         }
-        // A number and the Latin words after it (`1 ms`, `2 GB RAM`), outside URLs: between the
-        // number and the word, a space takes the paragraph's direction and the two swap (gemma4-qat#1986).
-        // Not after a left-to-right word (`the value 10 GB`): there the number already takes the
-        // word's direction (rule W7) and the whole phrase is one run, which an isolate would split.
-        let measures = ranges(measure).filter { range in
-            !urls.contains(where: { $0.overlaps(range) })
-                && string[..<range.lowerBound].unicodeScalars.reversed()
-                    .lazy.compactMap(MarkdownContentDirection.strongDirection(of:)).first != .leftToRight
-        }
-        return urls.map { ($0, true) } + (dates + numbers + measures).map { ($0, false) }
+        return urls.map { ($0, true) } + (dates + numbers).map { ($0, false) }
     }
 
     /// The bare URLs in `string` (`MarkdownContentDirection` skips them as it skips autolinks).
@@ -246,12 +299,13 @@ enum MarkdownBidiIsolation {
         pattern: #"(?<![\p{L}\p{N}])[0-9]{4}-[0-9]{2}-[0-9]{2}(?![\p{L}\p{N}])"#
     )
 
-    /// An ASCII number, a decimal one too, then one or more Latin words, each after one space or
-    /// no-break space: `1 ms`, `12.5 GB`, `2 GB RAM`, `40 km/h`. A Latin word before a number
-    /// needs nothing (the number takes the word's direction); a number with no space before its
-    /// unit (`5GB`) stays one run on its own.
+    /// A measure: a whole ASCII number (`12.5`, `12:30`, `1/2`), then one or more Latin words, each
+    /// after one space or no-break space: `1 ms`, `2 GB RAM`, `40 km/h`, `3 files in the folder`.
+    /// Between the number and the word a space takes the paragraph's direction and the two swap
+    /// (gemma4-qat#1986). Group 1 is the number and its first word, the part that never breaks. A
+    /// number with no space before its unit (`5GB`) is one run already.
     private static let measure = try! NSRegularExpression(
-        pattern: #"(?<![\p{L}\p{N}.,])[0-9]+(?:[.,][0-9]+)?(?:[ \x{00A0}][A-Za-z][A-Za-z0-9]*(?:/[A-Za-z]+)?)+(?![\p{L}\p{N}])"#
+        pattern: #"(?<![\p{L}\p{N}.,:/])([0-9]+(?:[.,:/][0-9]+)*[ \x{00A0}][A-Za-z][A-Za-z0-9]*(?:/[A-Za-z]+)?)(?:[ \x{00A0}][A-Za-z][A-Za-z0-9]*(?:/[A-Za-z]+)?)*(?![\p{L}\p{N}])"#
     )
 
     /// Digits in three or more groups split by single spaces, no-break spaces, dots or hyphens,

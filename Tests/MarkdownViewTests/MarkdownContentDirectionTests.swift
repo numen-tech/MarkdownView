@@ -237,14 +237,31 @@ struct MarkdownContentDirectionTests {
             String(MarkdownBidiIsolation.isolated(AttributedString(text), layoutDirection: .rightToLeft).characters)
         }
         #expect(shown("خلال أقل من 1 ms.") == "خلال أقل من \u{2066}1\u{00A0}ms\u{2069}.")
-        #expect(shown("ذاكرة 2 GB RAM فقط") == "ذاكرة \u{2066}2\u{00A0}GB\u{00A0}RAM\u{2069} فقط")
+        #expect(shown("ذاكرة 2 GB RAM فقط") == "ذاكرة \u{2066}2\u{00A0}GB RAM\u{2069} فقط")
         #expect(shown("السرعة 40 km/h و 12.5 GB") == "السرعة \u{2066}40\u{00A0}km/h\u{2069} و \u{2066}12.5\u{00A0}GB\u{2069}")
+        // A whole number: a time or a fraction is not cut at its `:` or `/`.
+        #expect(shown("الموعد 12:30 UTC") == "الموعد \u{2066}12:30\u{00A0}UTC\u{2069}")
+        #expect(shown("أضف 1/2 cup") == "أضف \u{2066}1/2\u{00A0}cup\u{2069}")
+        // Only the number and its first word are kept together; the clause still wraps.
+        #expect(shown("נמצאו 3 files in the current directory") == "נמצאו \u{2066}3\u{00A0}files in the current directory\u{2069}")
         // After a Latin word the number already reads with it (rule W7): no isolate to split them.
         #expect(shown("القيمة value 10 GB هنا") == "القيمة value 10 GB هنا")
+        // A Latin letter inside an isolate is invisible to W7, so it does not count as one.
+        #expect(shown("خلال 1 ms، 2 GB") == "خلال \u{2066}1\u{00A0}ms\u{2069}، \u{2066}2\u{00A0}GB\u{2069}")
+        #expect(shown("راجع https://example.com/v 2 ok") == "راجع \u{2066}https://example.com/v\u{2069} \u{2066}2\u{00A0}ok\u{2069}")
         // No space, no swap: `5GB` is one run already.
         #expect(shown("حجم 5GB فقط") == "حجم 5GB فقط")
-        // A number inside a URL is the URL's.
-        #expect(shown("راجع https://example.com/v 2 ok") == "راجع \u{2066}https://example.com/v\u{2069} 2 ok")
+    }
+
+    @Test("Inline code keeps its own spaces", .tags(.rendering))
+    func codeKeepsSpaces() {
+        var code = AttributedString("x = 1 in items")
+        code[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        var phone = AttributedString("+966 50 123 4567")
+        phone[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        let text = AttributedString("שלום ") + code + AttributedString(" ו ") + phone
+        let shown = String(MarkdownBidiIsolation.isolated(text, layoutDirection: .rightToLeft).characters)
+        #expect(shown == "שלום \u{2066}x = 1 in items\u{2069} ו \u{2066}+966 50 123 4567\u{2069}")
     }
 
     @Test("Left-to-right text is unchanged, measures and phone numbers included", .tags(.rendering))
@@ -291,7 +308,7 @@ struct MarkdownContentDirectionTests {
                 #expect(xs == xs.sorted(), "width \(width): +966 50 123 4567 in order")
             }
             let unit = try #require(Self.utf16Range(of: "1\u{00A0}ms", in: shown))
-            if let line = lines.first(where: { NSLocationInRange(unit.location, $0.range) }) {
+            if let line = lines.first(where: { NSIntersectionRange($0.range, unit) == unit }) {
                 let one = CTLineGetOffsetForStringIndex(line.line, unit.location, nil)
                 let m = CTLineGetOffsetForStringIndex(line.line, unit.location + 2, nil)
                 #expect(one < m, "width \(width): 1 ms, not ms 1")
@@ -306,7 +323,7 @@ struct MarkdownContentDirectionTests {
         #expect(brokeInsideWithoutTheFix, "the widths swept include one that broke the number before the fix")
         // The control for the unit: unisolated, `1 ms` lays out as `ms 1`.
         let raw = try #require(Self.utf16Range(of: "1 ms", in: sentence))
-        let rawLine = try #require(Self.layout(sentence, width: 420).first { NSLocationInRange(raw.location, $0.range) })
+        let rawLine = try #require(Self.layout(sentence, width: 420).first { NSIntersectionRange($0.range, raw) == raw })
         #expect(CTLineGetOffsetForStringIndex(rawLine.line, raw.location, nil) > CTLineGetOffsetForStringIndex(rawLine.line, raw.location + 2, nil))
     }
 
