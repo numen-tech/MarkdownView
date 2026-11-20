@@ -54,6 +54,9 @@ struct MarkdownContentDirectionTests {
         ("| الاسم | Name |\n|---|---|\n| a | b |", .rightToLeft, false),
         ("> اقتباس\n> quote", .rightToLeft, false),
         ("https://example.com مرحبا", .rightToLeft, false),
+        // A scheme glued to digits is still found from its first letter, so its letters are skipped.
+        ("2https://example.com مرحبا", .rightToLeft, false),
+        ("1.https://x.org/a?b=c مرحبا", .rightToLeft, false),
         ("<https://example.com> مرحبا", .rightToLeft, false),
         ("<name@example.com> مرحبا", .rightToLeft, false),
         ("[docs](https://example.com) مرحبا", .leftToRight, false),
@@ -140,6 +143,9 @@ struct MarkdownContentDirectionTests {
         var found: [String] = []
         let elapsed = clock.measure { found = MarkdownBidiIsolation.urlRanges(in: text).map { String(text[$0]) } }
         #expect(found == ["www.example.com", "https://x.org/(a)"])
+        // The scheme starts at a word's first letter, as before: digits glued in front stay out.
+        #expect(MarkdownBidiIsolation.urlRanges(in: "2https://x.org 1.ftp://y.org xwww.z.org a1b://w").map { String("2https://x.org 1.ftp://y.org xwww.z.org a1b://w"[$0]) }
+            == ["https://x.org", "ftp://y.org", "www.z.org", "a1b://w"])
         // Retried from every letter, 10 000 letters took 1.4 s and 40 000 took 23 s (M3 Max); from
         // a word's start, 40 000 take 5 ms.
         #expect(elapsed < .seconds(1))

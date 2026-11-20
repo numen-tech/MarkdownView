@@ -401,7 +401,7 @@ enum MarkdownBidiIsolation {
     static func urlRanges(in string: String) -> [Range<String.Index>] {
         guard string.contains("://") || string.contains("www.") else { return [] }
         return url.matches(in: string, range: NSRange(string.startIndex..., in: string)).compactMap { match in
-            guard var range = Range(match.range, in: string) else { return nil }
+            guard var range = Range(match.range(at: 1), in: string) else { return nil }
             // A closing parenthesis that balances one in the URL belongs to it
             // (`https://en.wikipedia.org/wiki/Swift_(programming_language)`). Counted once, then
             // kept up to date, so a run of them is one walk.
@@ -470,10 +470,13 @@ enum MarkdownBidiIsolation {
 
     /// A URL with a scheme or `www.`, without the sentence punctuation after it.
     /// A URL never runs across a paragraph separator (bidi class B: `\s` misses U+001C-U+001E),
-    /// so matching resumes after one at the next URL. A scheme starts a token (the lookbehind):
-    /// without it the scheme part was retried from every letter of a long word, quadratic in it.
+    /// so matching resumes after one at the next URL. The scheme is tried once per word, from its
+    /// first letter (`2https://...` gives `https://...`, as before): the lookbehind holds the
+    /// attempt to a word's start, and the digits or signs before the letter are skipped
+    /// possessively. Retried from every letter, a long word cost time quadratic in its length.
+    /// Group 1 is the URL.
     private static let url = try! NSRegularExpression(
-        pattern: #"(?:(?<![a-zA-Z0-9+.\-])[a-zA-Z][a-zA-Z0-9+.\-]*://|www\.)[^\s<>"،؛؟\x{200E}\x{200F}\x{2066}-\x{2069}\x{0A}\x{0D}\x{1C}-\x{1E}\x{85}\x{2029}]*[^\s<>".,:;!?'’”)\]،؛؟\x{200E}\x{200F}\x{2066}-\x{2069}\x{0A}\x{0D}\x{1C}-\x{1E}\x{85}\x{2029}]"#
+        pattern: #"(?:(?<![a-zA-Z0-9+.\-])[0-9+.\-]*+(?=[a-zA-Z])|(?=www\.))((?:[a-zA-Z][a-zA-Z0-9+.\-]*://|www\.)[^\s<>"،؛؟\x{200E}\x{200F}\x{2066}-\x{2069}\x{0A}\x{0D}\x{1C}-\x{1E}\x{85}\x{2029}]*[^\s<>".,:;!?'’”)\]،؛؟\x{200E}\x{200F}\x{2066}-\x{2069}\x{0A}\x{0D}\x{1C}-\x{1E}\x{85}\x{2029}])"#
     )
 
     /// An ISO date, `2026-11-17`. (ASCII digits only here and in `number`: Arabic-Indic digit
