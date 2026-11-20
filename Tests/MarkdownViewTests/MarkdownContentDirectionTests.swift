@@ -18,11 +18,20 @@ struct MarkdownContentDirectionTests {
         ("\u{200F}abc", .rightToLeft),
         ("\u{200E}مرحبا", .leftToRight),
         ("\u{2066}git\u{2069} مرحبا", .rightToLeft),
+        ("؟ Git", .rightToLeft),
+        ("\u{2067}ع https://x.org abc\u{2069} مرحبا", .rightToLeft),
+        ("\u{05B0}\u{0651} ok", .leftToRight),
         ("\u{2067}مرحبا\u{2069} hello", .leftToRight),
         ("日本語", .leftToRight),
     ])
     func firstStrong(text: String, expected: LayoutDirection) {
         #expect(MarkdownContentDirection.firstStrong(in: text) == expected)
+    }
+
+    @Test("Isolate depth carries across a skipped URL", .tags(.rendering))
+    func depthAcrossSkips() {
+        #expect(MarkdownContentDirection.firstStrong(inText: "\u{2067}ع https://x.org abc\u{2069} مرحبا", skipsMath: false) == .rightToLeft)
+        #expect(MarkdownContentDirection.firstStrong(inText: "https://x.org abc", skipsMath: false) == .leftToRight)
     }
 
     @Test("Digits, punctuation and emoji are neutral", .tags(.rendering), arguments: ["", "42", "-- 3.14 --", "🙂 ✅", "٣٤٥"])
@@ -139,6 +148,38 @@ struct MarkdownContentDirectionTests {
         #expect(url == "راجع \u{2066}https://example.com\u{2069}؟")
         let dates = String(MarkdownBidiIsolation.isolated(AttributedString("من 2024-05-01 2025-06-01"), layoutDirection: .rightToLeft).characters)
         #expect(dates == "من \u{2066}2024-05-01\u{2069} \u{2066}2025-06-01\u{2069}")
+        let phone = String(MarkdownBidiIsolation.isolated(AttributedString("اتصل +1 212-555-0123"), layoutDirection: .rightToLeft).characters)
+        #expect(phone == "اتصل \u{2066}+1 212-555-0123\u{2069}")
+        let comma = String(MarkdownBidiIsolation.isolated(AttributedString("راجع https://example.com،ثم"), layoutDirection: .rightToLeft).characters)
+        #expect(comma == "راجع \u{2066}https://example.com\u{2069}،ثم")
+    }
+
+    @Test("Arabic-Indic grouped digits are isolated", .tags(.rendering))
+    func arabicIndicNumber() {
+        let shown = String(MarkdownBidiIsolation.isolated(AttributedString("الهاتف +٩٦٦ ٥٠ ١٢٣ ٤٥٦٧ الآن"), layoutDirection: .rightToLeft).characters)
+        #expect(shown == "الهاتف \u{2066}+٩٦٦ ٥٠ ١٢٣ ٤٥٦٧\u{2069} الآن")
+    }
+
+    @Test("A paragraph written left to right in a mixed text gets no isolates", .tags(.rendering))
+    func leftToRightParagraphUnisolated() throws {
+        var code = AttributedString("status")
+        code[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        let english = MarkdownNodeView(AttributedString("Run git ") + code + AttributedString(".")).withDirection(.leftToRight)
+        let hebrew = MarkdownNodeView("שלום").withDirection(.rightToLeft)
+        let merged = try #require(MarkdownNodeView([english, hebrew], layoutPolicy: .linebreak).asAttributedString)
+        let shown = String(MarkdownBidiIsolation.isolated(merged, layoutDirection: .leftToRight).characters)
+        #expect(shown == "Run git status.\n\nשלום")
+    }
+
+    @Test("Explicit left and right columns stay physical in a right-to-left table", .tags(.rendering))
+    func physicalColumnAlignment() throws {
+        let table = try #require(document("| الاسم | العدد | ملاحظة |\n|:---|---:|---|\n| a | 1 | x |").child(at: 0) as? Markdown.Table)
+        let cells = Array(table.head.cells)
+        #expect(cells[0].horizontalAlignment(tableDirection: .rightToLeft) == .trailing)
+        #expect(cells[1].horizontalAlignment(tableDirection: .rightToLeft) == .leading)
+        #expect(cells[2].horizontalAlignment(tableDirection: .rightToLeft) == .leading)
+        #expect(cells[0].horizontalAlignment(tableDirection: .leftToRight) == .leading)
+        #expect(cells[1].horizontalAlignment(tableDirection: nil) == .trailing)
     }
 
     @Test("Spans merge sorted, overlapping ones joined", .tags(.rendering))

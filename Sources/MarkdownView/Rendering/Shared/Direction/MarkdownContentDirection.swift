@@ -12,10 +12,11 @@ import Markdown
 /// text rather than the UI's, so an Arabic reply in an English UI reads right to left and an
 /// English one in an Arabic UI left to right.
 ///
-/// "Strong" is approximated without the Unicode bidi tables, which Swift does not expose: a letter
-/// (`isAlphabetic`) in a right-to-left script block (Hebrew, Arabic, Syriac, Thaana, NKo,
-/// Samaritan, Mandaic, their presentation forms and the supplementary RTL blocks) is
-/// right-to-left, any other letter left-to-right, and the marks LRM, RLM and ALM count. Digits,
+/// "Strong" is approximated without the Unicode bidi tables, which Swift does not expose: a
+/// character in a right-to-left script block (Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan,
+/// Mandaic, their presentation forms and the supplementary RTL blocks) other than its marks,
+/// digits and few weak or neutral signs is right-to-left (letters, and punctuation such as `؟`),
+/// any other letter left-to-right, and the marks LRM, RLM and ALM count. Digits,
 /// punctuation, symbols, spaces and emoji are neutral.
 public enum MarkdownContentDirection {
     /// The direction of the first strong character of `text`, or nil when it has none. As rule P2
@@ -44,8 +45,25 @@ public enum MarkdownContentDirection {
         case 0x200F, 0x061C: return .rightToLeft  // RIGHT-TO-LEFT MARK, ARABIC LETTER MARK
         default: break
         }
+        if isRightToLeftBlock(scalar.value) {
+            // Most of these blocks is strong R or AL, punctuation such as `؟` and `؛` included;
+            // their marks, digits and the few weak or neutral signs are not.
+            switch scalar.properties.generalCategory {
+            case .nonspacingMark, .enclosingMark, .spacingMark, .decimalNumber, .format, .spaceSeparator:
+                return nil
+            default:
+                break
+            }
+            switch scalar.value {
+            case 0x0600...0x0605, 0x0609...0x060A, 0x060C, 0x060E...0x060F, 0x066A...0x066C, 0x06DD...0x06DE, 0x06E9,
+                 0x08E2, 0xFD3E...0xFD3F:  // number signs, per-mille, comma, poetic marks, ornate parentheses
+                return nil
+            default:
+                return .rightToLeft
+            }
+        }
         guard scalar.properties.isAlphabetic else { return nil }
-        return isRightToLeftBlock(scalar.value) ? .rightToLeft : .leftToRight
+        return .leftToRight
     }
 
     private static func isRightToLeftBlock(_ value: UInt32) -> Bool {
@@ -72,11 +90,7 @@ public enum MarkdownContentDirection {
         case is InlineCode, is CodeBlock, is InlineHTML, is HTMLBlock, is Markdown.Image, is SymbolLink:
             return nil
         case let link as Markdown.Link:
-            // An autolink: `<https://...>`, or `<name@example.com>` with its `mailto:` destination.
-            if let destination = link.destination,
-               link.plainText == destination || "mailto:" + link.plainText == destination {
-                return nil
-            }
+            if isAutolink(link) { return nil }
         default:
             break
         }
@@ -90,19 +104,40 @@ public enum MarkdownContentDirection {
     /// placeholders and `$...$`-style spans: a formula's letters are not prose) and past bare URLs,
     /// which the display isolates as autolinks are.
     static func firstStrong(inText text: String, skipsMath: Bool) -> LayoutDirection? {
-        var skipped = MarkdownBidiIsolation.leftToRightRuns(in: text)
+        var skipped = MarkdownBidiIsolation.urlRanges(in: text)
         if skipsMath, text.contains(where: { $0 == "$" || $0 == "\\" || $0 == "(" }) {
             skipped += MarkdownMathPreprocessor.placeholderSegments(in: text).map(\.range)
                 + MathParser(text: text).mathRepresentations.map(\.range)
         }
         guard !skipped.isEmpty else { return firstStrong(in: text) }
-        var index = text.startIndex
-        for range in skipped.sorted(by: { $0.lowerBound < $1.lowerBound }) {
-            if index < range.lowerBound, let direction = firstStrong(in: text[index..<range.lowerBound]) {
-                return direction
+        // One scan, so an isolate's depth carries across a skipped range.
+        let sorted = skipped.sorted { $0.lowerBound < $1.lowerBound }
+        var next = 0
+        var isolates = 0
+        var index = text.unicodeScalars.startIndex
+        while index < text.unicodeScalars.endIndex {
+            while next < sorted.count, sorted[next].upperBound <= index { next += 1 }
+            if next < sorted.count, sorted[next].contains(index) {
+                index = sorted[next].upperBound
+                continue
             }
-            index = max(index, range.upperBound)
+            let scalar = text.unicodeScalars[index]
+            switch scalar.value {
+            case 0x2066...0x2068: isolates += 1
+            case 0x2069: isolates = max(isolates - 1, 0)
+            default:
+                if isolates == 0, let direction = strongDirection(of: scalar) { return direction }
+            }
+            index = text.unicodeScalars.index(after: index)
         }
-        return index < text.endIndex ? firstStrong(in: text[index...]) : nil
+        return nil
+    }
+
+    /// Whether `link` is an autolink, shown as its own address: `<https://...>`, or
+    /// `<name@example.com>` with its `mailto:` destination. The renderer isolates these, and
+    /// a block's direction skips them.
+    static func isAutolink(_ link: Markdown.Link) -> Bool {
+        guard let destination = link.destination else { return false }
+        return link.plainText == destination || "mailto:" + link.plainText == destination
     }
 }

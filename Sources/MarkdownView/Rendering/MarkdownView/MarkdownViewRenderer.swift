@@ -278,7 +278,7 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         }
         return MarkdownNodeView(
             cellViews,
-            alignment: cell.horizontalAlignment
+            alignment: cell.horizontalAlignment(tableDirection: cell.table.flatMap(contentDirection(of:)))
         )
     }
     
@@ -342,9 +342,9 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
                     if underlineLinks {
                         attributes.underlineStyle = .single
                     }
-                    // numen fork (gemma4-qat#1765): a bare link (its URL as its label) reads
-                    // left to right inside right-to-left prose.
-                    if link.plainText == destination {
+                    // numen fork (gemma4-qat#1765): an autolink (a URL or an email address as its
+                    // own label) reads left to right inside right-to-left prose.
+                    if MarkdownContentDirection.isAutolink(link) {
                         attributes[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
                     }
                     return attributes
@@ -411,9 +411,11 @@ fileprivate extension MarkdownViewRenderer {
         )
         .makeBody(for: cell)
         
+        // numen fork (gemma4-qat#1765): explicit left/right columns stay physical in an RTL table.
+        let tableDirection = cell.table.flatMap(contentDirection(of:))
         return MarkdownTableStyleConfiguration.Table.Cell(
-            horizontalAlignment: cell.horizontalAlignment,
-            textAlignment: cell.textAlignment,
+            horizontalAlignment: cell.horizontalAlignment(tableDirection: tableDirection),
+            textAlignment: cell.textAlignment(tableDirection: tableDirection),
             colspan: Int(cell.colspan),
             content: content
         )
