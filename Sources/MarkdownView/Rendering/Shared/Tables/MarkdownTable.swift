@@ -4,6 +4,7 @@ import Markdown
 struct MarkdownTable: View {
     var table: MarkdownTableStyleConfiguration.Table
     @Environment(\.markdownTableStyle) private var tableStyle
+    @Environment(\.layoutDirection) private var layoutDirection
 
     init(table: MarkdownTableStyleConfiguration.Table) {
         self.table = table
@@ -18,7 +19,16 @@ struct MarkdownTable: View {
             .erasedToAnyView()
             .markdownTableCellStyleApplied()
             .coordinateSpace(name: MarkdownTable.CoordinateSpaceName)
+            // numen fork (gemma4-qat#1765): every row places its cells in the grid's columns by
+            // the table's direction, even a row a custom style lays out in another.
+            .environment(\.markdownTableLayoutDirection, layoutDirection)
     }
+}
+
+extension EnvironmentValues {
+    /// numen fork (gemma4-qat#1765): the direction the table lays out in, set by `MarkdownTable`.
+    /// Nil for a row rendered outside one.
+    @Entry var markdownTableLayoutDirection: LayoutDirection? = nil
 }
 
 extension MarkdownTable {

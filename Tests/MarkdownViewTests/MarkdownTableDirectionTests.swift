@@ -52,6 +52,26 @@ struct MarkdownTableDirectionTests {
         #expect(abs(body.minX - header.minX) <= 4)
     }
 
+    @Test("A row a custom style lays out in another direction keeps the table's columns", .tags(.rendering))
+    func rowDirectionOverrideKeepsColumns() throws {
+        // A right-to-left table whose style lays its header out left to right: the grid's
+        // column still aligns by the table's direction, so `:---` stays physically left for
+        // the body too (Codex review on numen-tech/MarkdownView#8).
+        let view = MarkdownView("| مرحبا مرحبا مرحبا مرحبا |\n|:---|\n| 8 |")
+            .markdownTableStyle(FlippedHeaderTableStyle())
+            .frame(width: 400)
+            .background(Color.white)
+            .environment(\.colorScheme, .light)
+            .environment(\.layoutDirection, .rightToLeft)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        let image = try #require(renderer.cgImage)
+        let lines = Self.inkLines(in: image)
+        try #require(lines.count >= 2)
+        let header = lines[lines.count - 2], body = lines[lines.count - 1]
+        #expect(abs(body.minX - header.minX) <= 4)
+    }
+
     /// The horizontal extent of each band of dark (text) pixels, top to bottom.
     static func inkLines(in image: CGImage) -> [(minX: Int, maxX: Int)] {
         let width = image.width, height = image.height
@@ -106,5 +126,17 @@ struct MarkdownTableDirectionTests {
             else if count * 2 > height { columns[columns.count - 1] = x }
         }
         return columns
+    }
+}
+
+private struct FlippedHeaderTableStyle: MarkdownTableStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Grid(horizontalSpacing: 0, verticalSpacing: 0) {
+            configuration.table.header
+                .environment(\.layoutDirection, .leftToRight)
+            ForEach(Array(configuration.table.rows.enumerated()), id: \.offset) { _, row in
+                row
+            }
+        }
     }
 }

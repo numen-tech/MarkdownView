@@ -151,21 +151,17 @@ struct MarkdownContentDirectionTests {
         #expect(elapsed < .seconds(1))
     }
 
-    @Test("A long grouped number's spaces are kept together in one pass", .tags(.rendering))
+    @Test("A long grouped number keeps every space as a no-break space", .tags(.rendering))
     func keptTogetherLinear() {
         let groups = 8_000
         let number = (0..<groups).map { _ in "123" }.joined(separator: " ")
         let text = AttributedString("مرحبا " + number)
-        let clock = ContinuousClock()
-        var shown = AttributedString()
-        let elapsed = clock.measure { shown = MarkdownBidiIsolation.isolated(text, layoutDirection: .rightToLeft) }
+        let shown = MarkdownBidiIsolation.isolated(text, layoutDirection: .rightToLeft)
         let characters = String(shown.characters)
         #expect(characters.filter { $0 == "\u{00A0}" }.count == groups - 1)
         #expect(characters.hasPrefix("مرحبا \u{2066}123\u{00A0}123"))
-        // Codex measured the per-space rewrite quadratic on Linux (4 000 groups, 5 s); Apple's
-        // AttributedString kept it near linear (8 000 groups, 0.11 s on an M3 Max either way), so
-        // this pins the output and a bound rather than telling the two apart on a Mac.
-        #expect(elapsed < .seconds(1))
+        // No timing bound: on Apple platforms the old per-space rewrite was near linear too (Codex
+        // measured it quadratic on Linux), so a bound here would only measure the machine.
     }
 
     @Test("Isolate depth carries across inline markup within a block, and resets per block", .tags(.rendering), arguments: [

@@ -413,11 +413,12 @@ extension MarkdownViewRenderer {
         // numen fork (gemma4-qat#1765): explicit left/right columns stay physical in an RTL table.
         // Both alignments go to the row, which picks by the direction the table lays out in: its
         // own, or inherited when it has no strong letter (a numeric table in an Arabic quote).
+        let alignments = cell.directionalAlignments
         return MarkdownTableStyleConfiguration.Table.Cell(
-            horizontalAlignment: cell.horizontalAlignment(tableDirection: .leftToRight),
-            textAlignment: cell.textAlignment(tableDirection: .leftToRight),
-            rightToLeftHorizontalAlignment: cell.horizontalAlignment(tableDirection: .rightToLeft),
-            rightToLeftTextAlignment: cell.textAlignment(tableDirection: .rightToLeft),
+            horizontalAlignment: alignments.leftToRight.horizontal,
+            textAlignment: alignments.leftToRight.text,
+            rightToLeftHorizontalAlignment: alignments.rightToLeft.horizontal,
+            rightToLeftTextAlignment: alignments.rightToLeft.text,
             colspan: Int(cell.colspan),
             content: content
         )

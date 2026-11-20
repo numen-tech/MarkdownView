@@ -143,12 +143,13 @@ enum MarkdownBidiIsolation {
         // One forward pass: the text between replaced spaces is copied as slices, so a long
         // grouped number costs one walk, not one walk per space.
         var piece = AttributedString()
+        let characters = slice.characters
         var copied = slice.startIndex
         var index = slice.startIndex
         var at = offset
         while index < slice.endIndex {
-            let after = slice.characters.index(after: index)
-            if slice.characters[index] == " " {
+            let after = characters.index(after: index)
+            if characters[index] == " " {
                 while cursor < unbroken.count, unbroken[cursor].upperBound <= at { cursor += 1 }
                 if cursor < unbroken.count, unbroken[cursor].contains(at) {
                     piece += slice[copied..<index]
@@ -405,6 +406,7 @@ enum MarkdownBidiIsolation {
             // A closing parenthesis that balances one in the URL belongs to it
             // (`https://en.wikipedia.org/wiki/Swift_(programming_language)`). Counted once, then
             // kept up to date, so a run of them is one walk.
+            guard range.upperBound < string.endIndex, string[range.upperBound] == ")" else { return range }
             var open = string[range].reduce(0) { $0 + ($1 == "(" ? 1 : $1 == ")" ? -1 : 0) }
             while open > 0, range.upperBound < string.endIndex, string[range.upperBound] == ")" {
                 range = range.lowerBound..<string.index(after: range.upperBound)

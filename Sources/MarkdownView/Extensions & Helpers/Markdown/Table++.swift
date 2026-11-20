@@ -14,32 +14,48 @@ extension Markdown.Table.Cell {
     /// column marked `:---` or `---:` stays on the physical left or right, as GFM and HTML mean
     /// it; `leading` and `trailing` mirror in a right-to-left table, so those two swap there.
     func horizontalAlignment(tableDirection: LayoutDirection?) -> HorizontalAlignment {
-        physicalAlignment(tableDirection: tableDirection).horizontalAlignment
+        let both = directionalAlignments
+        return tableDirection == .rightToLeft ? both.rightToLeft.horizontal : both.leftToRight.horizontal
     }
 
     func textAlignment(tableDirection: LayoutDirection?) -> TextAlignment {
-        physicalAlignment(tableDirection: tableDirection).textAlignment
+        let both = directionalAlignments
+        return tableDirection == .rightToLeft ? both.rightToLeft.text : both.leftToRight.text
     }
 
-    private var owningTable: Markdown.Table? {
+    /// The cell's alignment in a left-to-right and in a right-to-left table, from one read of its
+    /// column's parsed alignment.
+    var directionalAlignments: (
+        leftToRight: (horizontal: HorizontalAlignment, text: TextAlignment),
+        rightToLeft: (horizontal: HorizontalAlignment, text: TextAlignment)
+    ) {
+        let column = columnAlignment
+        let leftToRight: CellAlignment = switch column {
+        case .center: .center
+        case .right: .trailing
+        case .left, .none: .leading
+        }
+        let rightToLeft: CellAlignment = switch column {
+        case .left: .trailing
+        case .right: .leading
+        case .center, .none: leftToRight
+        }
+        return ((leftToRight.horizontalAlignment, leftToRight.textAlignment), (rightToLeft.horizontalAlignment, rightToLeft.textAlignment))
+    }
+
+    /// The parsed alignment of the cell's column, nil when unmarked or outside a table.
+    private var columnAlignment: Markdown.Table.ColumnAlignment? {
+        guard parent is any TableCellContainer else { return nil }
         var element = parent
         while let current = element {
-            if let table = current as? Markdown.Table { return table }
+            if let table = current as? Markdown.Table {
+                return indexInParent < table.columnAlignments.count ? table.columnAlignments[indexInParent] : nil
+            }
             element = current.parent
         }
         return nil
     }
-
-    private func physicalAlignment(tableDirection: LayoutDirection?) -> CellAlignment {
-        guard tableDirection == .rightToLeft, parent is any TableCellContainer,
-              let alignments = owningTable?.columnAlignments, indexInParent < alignments.count
-        else { return cellAlignment }
-        switch alignments[indexInParent] {
-        case .left: return .trailing
-        case .right: return .leading
-        default: return cellAlignment
-        }
-    }}
+}
 
 private extension Markdown.Table.Cell {
     var cellAlignment: CellAlignment {
