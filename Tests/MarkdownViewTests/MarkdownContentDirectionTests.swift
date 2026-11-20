@@ -166,8 +166,13 @@ struct MarkdownContentDirectionTests {
         #expect(MarkdownContentDirection.of(twoURLs, skipsMath: false) == .rightToLeft)
         let comment = try #require(document("\u{2067}abc <!--a\nb--> שלום\u{2069} English").child(at: 0))
         #expect(MarkdownContentDirection.of(comment, skipsMath: false) == .leftToRight)
-        let lineBreakTag = try #require(document("\u{2067}abc <br/> שלום").child(at: 0))
-        #expect(MarkdownContentDirection.of(lineBreakTag, skipsMath: false) == .rightToLeft)
+        for tag in ["<br/>", "<BR>", "<br id=\"x\">", "<br class='a' />"] {
+            let lineBreakTag = try #require(document("\u{2067}abc " + tag + " שלום").child(at: 0))
+            #expect(MarkdownContentDirection.of(lineBreakTag, skipsMath: false) == .rightToLeft, "\(tag)")
+        }
+        // Not a line break: a tag that only starts with br.
+        let brand = try #require(document("\u{2067}abc <brand> שלום\u{2069} English").child(at: 0))
+        #expect(MarkdownContentDirection.of(brand, skipsMath: false) == .leftToRight)
         let found = MarkdownBidiIsolation.urlRanges(in: "https://x.org/a\u{2029}b")
         #expect(found.map { "https://x.org/a\u{2029}b"[$0] } == ["https://x.org/a"])
         // Renderer level: the paragraph node takes the right-to-left direction.
