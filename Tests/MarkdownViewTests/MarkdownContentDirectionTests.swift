@@ -170,7 +170,7 @@ struct MarkdownContentDirectionTests {
         #expect(MarkdownContentDirection.of(twoURLs, skipsMath: false) == .rightToLeft)
         let comment = try #require(document("\u{2067}abc <!--a\nb--> שלום\u{2069} English").child(at: 0))
         #expect(MarkdownContentDirection.of(comment, skipsMath: false) == .leftToRight)
-        for tag in ["<br/>", "<BR>", "<br id=\"x\">", "<br class='a' />"] {
+        for tag in ["<br/>", "<BR>", "<br id=\"x\">", "<br class='a' />", "<br title=\"a>b\">", "<br data-x='>'/>"] {
             let lineBreakTag = try #require(document("\u{2067}abc " + tag + " שלום").child(at: 0))
             #expect(MarkdownContentDirection.of(lineBreakTag, skipsMath: false) == .rightToLeft, "\(tag)")
         }
