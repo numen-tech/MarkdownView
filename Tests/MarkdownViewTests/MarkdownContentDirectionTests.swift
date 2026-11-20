@@ -289,6 +289,64 @@ struct MarkdownContentDirectionTests {
         #expect(shown("שלום \u{2066}abc\u{2069} 2 GB") == "שלום \u{2066}abc\u{2069} \u{2066}2\u{00A0}GB\u{2069}")
     }
 
+    @Test("A grouped number or date after a Latin word stays in its phrase", .tags(.rendering))
+    func numberAfterLatinWord() {
+        func shown(_ text: String) -> String {
+            String(MarkdownBidiIsolation.isolated(AttributedString(text), layoutDirection: .rightToLeft).characters)
+        }
+        // Rule W7 gives the digits the word's direction, so `value 1 234 567` is one run; an
+        // isolate would set the number apart. It keeps its no-break spaces.
+        #expect(shown("قيمة value 1 234 567 الآن") == "قيمة value 1\u{00A0}234\u{00A0}567 الآن")
+        #expect(shown("تاريخ release 2026-11-17 هنا") == "تاريخ release 2026-11-17 هنا")
+        #expect(shown("اتصل call +966 50 123 4567") == "اتصل call +966\u{00A0}50\u{00A0}123\u{00A0}4567")
+        // After a right-to-left word, or a Latin one inside an isolate, it is isolated as before.
+        #expect(shown("قيمة 1 234 567 الآن") == "قيمة \u{2066}1\u{00A0}234\u{00A0}567\u{2069} الآن")
+        #expect(shown("راجع https://x.org 1 234 567") == "راجع \u{2066}https://x.org\u{2069} \u{2066}1\u{00A0}234\u{00A0}567\u{2069}")
+        #expect(shown("שלום \u{2066}abc\u{2069} 2026-11-17") == "שלום \u{2066}abc\u{2069} \u{2066}2026-11-17\u{2069}")
+        // A newline ends the Latin word's reach.
+        #expect(shown("value\nقيمة 1 234 567") == "value\nقيمة \u{2066}1\u{00A0}234\u{00A0}567\u{2069}")
+        // A measure that takes the number still isolates the whole phrase (`1 ms 1 234 567`).
+        #expect(shown("خلال 1 ms 1 234 567") == "خلال \u{2066}1\u{00A0}ms 1\u{00A0}234\u{00A0}567\u{2069}")
+        // A measure's letters are inside its isolate, so the date after it follows Arabic.
+        #expect(shown("خلال 1 ms، 2026-11-17") == "خلال \u{2066}1\u{00A0}ms\u{2069}، \u{2066}2026-11-17\u{2069}")
+        // Inline code inside the number is isolated; the rest of the number keeps its no-break spaces.
+        var code = AttributedString("234")
+        code[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        let split = AttributedString("قيمة value 1 ") + code + AttributedString(" 567 الآن")
+        #expect(String(MarkdownBidiIsolation.isolated(split, layoutDirection: .rightToLeft).characters)
+            == "قيمة value 1\u{00A0}\u{2066}234\u{2069}\u{00A0}567 الآن")
+    }
+
+    @Test("Inside an isolate the text writes, URLs and inline code get none", .tags(.rendering))
+    func writtenIsolatesKeepTheirRuns() {
+        func shown(_ text: AttributedString) -> String {
+            String(MarkdownBidiIsolation.isolated(text, layoutDirection: .rightToLeft).characters)
+        }
+        // The FSI resolves from its first strong letter, the URL's `h`: left to right, as written.
+        let fsi = "abc \u{2068}https://example.com שלום\u{2069}"
+        #expect(shown(AttributedString(fsi)) == fsi)
+        for opener in ["\u{2066}", "\u{2067}"] {
+            let text = "שלום \(opener)https://x.org abc\u{2069}"
+            #expect(shown(AttributedString(text)) == text)
+        }
+        var code = AttributedString("ls -la")
+        code[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        #expect(shown(AttributedString("abc \u{2068}") + code + AttributedString(" שלום\u{2069}")) == "abc \u{2068}ls -la שלום\u{2069}")
+        // A line separator (U+2028) is no paragraph separator: the FSI stays open across it.
+        let lineSeparated = "abc \u{2068}\u{2028}https://x.org שלום\u{2069}"
+        #expect(shown(AttributedString(lineSeparated)) == lineSeparated)
+        // Nested: still inside the outer one after the inner PDI.
+        let nested = "abc \u{2068}\u{2067}x\u{2069} https://x.org שלום\u{2069}"
+        #expect(shown(AttributedString(nested)) == nested)
+        // Once the written isolate closes, or at a newline, a URL and code are isolated again.
+        #expect(shown(AttributedString("abc \u{2068}x\u{2069} https://example.com שלום"))
+            == "abc \u{2068}x\u{2069} \u{2066}https://example.com\u{2069} שלום")
+        #expect(shown(AttributedString("abc \u{2068}x\nשלום https://example.com"))
+            == "abc \u{2068}x\nשלום \u{2066}https://example.com\u{2069}")
+        #expect(shown(AttributedString("abc \u{2068}x\u{2069} ") + code + AttributedString(" שלום"))
+            == "abc \u{2068}x\u{2069} \u{2066}ls -la\u{2069} שלום")
+    }
+
     @Test("Inline code keeps its own spaces", .tags(.rendering))
     func codeKeepsSpaces() {
         var code = AttributedString("x = 1 in items")

@@ -15,7 +15,12 @@ import SwiftUI
 ///
 /// A number with Latin words after it (`1 ms`, `2 GB RAM`) is isolated too, and inside a found
 /// number, date or measure the spaces show as no-break spaces, so a line never breaks inside one
-/// (gemma4-qat#1986: `+966 50 123` ended one line and `4567` began the next).
+/// (gemma4-qat#1986: `+966 50 123` ended one line and `4567` began the next). A number, date or
+/// measure after a left-to-right letter is not isolated: rule W7 already reads it with that letter's
+/// phrase (`value 1 234 567`), and an isolate would set it apart; a number keeps its no-break spaces.
+/// Inside an isolate the text writes itself (FSI, LRI, RLI) nothing is isolated but numbers and
+/// dates, which hold no strong letter: an inner isolate around a URL or code would hide the letters
+/// an FSI resolves from.
 ///
 /// Applied only to the text handed to `Text` (`_MarkdownText`), never to the markdown, so a
 /// copy of the reply, Read Aloud, export and the stored history keep the model's bytes. Selecting
@@ -37,10 +42,15 @@ enum MarkdownBidiIsolation {
             .filter { $0.0 == true }.map(\.1)
         var tagged = characterOffsets(of: taggedRanges, in: text.characters)
         tagged.sort { $0.lowerBound < $1.lowerBound }
-        var spans = tagged
+        // Text that writes its own isolate (FSI, LRI, RLI) is left as written inside it: an FSI
+        // resolves from its first strong letter, which an inner isolate around a URL or code would
+        // hide (`abc FSI https://example.com שלום PDI` reads left to right).
+        let written = writtenIsolates(in: string)
+        var spans = tagged.filter { !starts($0, inside: written) }
         // The found numbers and dates, and each measure's number and first word (`1 ms`), whose
         // spaces show as no-break spaces, so a line never breaks inside one (gemma4-qat#1986).
         var found: [Range<Int>] = []
+        var numberRuns: [Range<Int>] = []
         var opaque = tagged
         var next = 0
         let runs = leftToRightRuns(in: string).sorted { $0.range.lowerBound < $1.range.lowerBound }
@@ -50,18 +60,43 @@ enum MarkdownBidiIsolation {
                 while next < tagged.count, tagged[next].upperBound <= span.lowerBound { next += 1 }
                 if next < tagged.count, tagged[next].overlaps(span) { continue }
                 opaque.append(span)
+                if !starts(span, inside: written) { spans.append(span) }
             } else {
                 found.append(span)
+                numberRuns.append(span)
             }
-            spans.append(span)
+        }
+        // A number or date after a left-to-right letter already reads with it (rule W7 gives its
+        // digits the letter's direction, `value 1 234 567`), and an isolate would set it apart
+        // from that phrase, so it keeps only its no-break spaces; any other one is isolated. The
+        // same rule as a measure's (`acceptedMeasures`).
+        let leading = precedingStrong(before: numberRuns.map(\.lowerBound), in: string, isolated: merge(spans))
+        var keptOnly: [Range<Int>] = []
+        for (span, strong) in zip(numberRuns, leading) {
+            if strong == .leftToRight { keptOnly.append(span) } else { spans.append(span) }
         }
         for measure in acceptedMeasures(in: string, isolated: merge(spans), numbers: found, opaque: merge(opaque)) {
             spans.append(measure.whole)
             found += measure.units
         }
+        // A measure's isolate hides its letters from W7 too (`خلال 1 ms، 2026-11-17`: the date
+        // follows Arabic once `1 ms` is isolated), so the kept-only numbers are judged again. An
+        // isolate only hides letters, so none goes the other way.
+        if !keptOnly.isEmpty, !spans.isEmpty {
+            let again = precedingStrong(before: keptOnly.map(\.lowerBound), in: string, isolated: merge(spans))
+            var stillKept: [Range<Int>] = []
+            for (span, strong) in zip(keptOnly, again) {
+                if strong == .leftToRight { stillKept.append(span) } else { spans.append(span) }
+            }
+            keptOnly = stillKept
+        }
         let unbroken = subtracting(merge(tagged), from: found.sorted { $0.lowerBound < $1.lowerBound })
         var unbrokenCursor = 0
-        let merged = merge(spans)
+        let isolates = merge(spans)
+        // The part of a kept-only number an isolate covers (a measure's, inline code inside it) is
+        // that isolate's; the rest keeps its no-break spaces.
+        let unisolated = subtracting(isolates, from: keptOnly)
+        let merged = (isolates.map { ($0, true) } + unisolated.map { ($0, false) }).sorted { $0.0.lowerBound < $1.0.lowerBound }
         guard !merged.isEmpty else { return text }
         let paragraphs = paragraphRanges(in: string)
         let isolating = isolatingParagraphs(paragraphs, of: text, string: string, layoutDirection: layoutDirection)
@@ -76,7 +111,7 @@ enum MarkdownBidiIsolation {
             cursor = (text.characters.index(cursor.index, offsetBy: target - cursor.offset), target)
             return cursor.index
         }
-        for span in merged {
+        for (span, isolates) in merged {
             let start = advance(to: span.lowerBound)
             // A paragraph that reads left to right and holds no right-to-left letter (a merged
             // text's English paragraph beside a Hebrew one) needs no isolate, and selecting it
@@ -86,9 +121,13 @@ enum MarkdownBidiIsolation {
             result += text[index..<start]
             let end = advance(to: span.upperBound)
             let last = text.characters.index(before: end)
-            result += AttributedString(String(isolateStart), attributes: text[start..<text.characters.index(after: start)].runs.first?.attributes ?? AttributeContainer())
+            if isolates {
+                result += AttributedString(String(isolateStart), attributes: text[start..<text.characters.index(after: start)].runs.first?.attributes ?? AttributeContainer())
+            }
             result += keptTogether(text[start..<end], from: span.lowerBound, unbroken: unbroken, cursor: &unbrokenCursor)
-            result += AttributedString(String(isolateEnd), attributes: text[last..<end].runs.first?.attributes ?? AttributeContainer())
+            if isolates {
+                result += AttributedString(String(isolateEnd), attributes: text[last..<end].runs.first?.attributes ?? AttributeContainer())
+            }
             index = end
         }
         result += text[index...]
@@ -140,7 +179,7 @@ enum MarkdownBidiIsolation {
     /// The measures of `string` (`measure`) that get an isolate, as character offsets: the whole
     /// match, and each number with the word after it (`pair`), which never break. One forward walk
     /// keeps the last strong direction outside the runs already isolated (`isolated`, sorted and
-    /// merged, and the measures taken so far), reset at each newline and restored after an isolate
+    /// merged, and the measures taken so far), reset at each paragraph separator and restored after an isolate
     /// written in the text, inside which no measure is taken. A measure after a left-to-right letter is left alone: there rule W7
     /// already gives the number the word's direction and the phrase is one run, which an isolate
     /// would split (`the value 10 GB`). The regex runs between inline code and URLs; a found
@@ -213,7 +252,7 @@ enum MarkdownBidiIsolation {
                 }
                 acceptedEnd = measure.whole.upperBound
             }
-            if character.isNewline {
+            if character.unicodeScalars.contains(where: MarkdownContentDirection.isParagraphSeparator) {
                 lastStrong = nil
                 saved.removeAll()
             } else if character == isolateEnd {
@@ -227,6 +266,75 @@ enum MarkdownBidiIsolation {
             }
         }
         return accepted
+    }
+
+    /// The character offsets inside an isolate the text writes itself (U+2066 LRI, U+2067 RLI,
+    /// U+2068 FSI, up to its PDI), nested ones included, sorted and disjoint. A paragraph separator
+    /// (bidi class B) ends every open one; a line separator (U+2028) does not.
+    static func writtenIsolates(in string: String) -> [Range<Int>] {
+        var ranges: [Range<Int>] = []
+        var depth = 0
+        var start = 0
+        for (offset, character) in string.enumerated() {
+            if character.unicodeScalars.contains(where: MarkdownContentDirection.isParagraphSeparator) {
+                if depth > 0 { ranges.append(start..<offset) }
+                depth = 0
+            } else if character == isolateStart || character == "\u{2067}" || character == "\u{2068}" {
+                if depth == 0 { start = offset + 1 }
+                depth += 1
+            } else if character == isolateEnd, depth > 0 {
+                depth -= 1
+                if depth == 0 { ranges.append(start..<offset) }
+            }
+        }
+        if depth > 0 { ranges.append(start..<string.count) }
+        return ranges.filter { !$0.isEmpty }
+    }
+
+    /// Whether `span` starts inside one of `ranges` (sorted, disjoint).
+    static func starts(_ span: Range<Int>, inside ranges: [Range<Int>]) -> Bool {
+        var low = 0
+        var high = ranges.count
+        while low < high {
+            let middle = (low + high) / 2
+            if ranges[middle].upperBound <= span.lowerBound { low = middle + 1 } else { high = middle }
+        }
+        return low < ranges.count && ranges[low].contains(span.lowerBound)
+    }
+
+    /// For each offset of `offsets` (sorted), the last strong direction before it as rule W7 sees
+    /// it: letters inside `isolated` (sorted, merged) or inside an isolate the text writes are
+    /// skipped, and a paragraph separator resets it. `nil` where there is none.
+    static func precedingStrong(before offsets: [Int], in string: String, isolated: [Range<Int>]) -> [LayoutDirection?] {
+        guard !offsets.isEmpty else { return [] }
+        var result: [LayoutDirection?] = []
+        result.reserveCapacity(offsets.count)
+        var lastStrong: LayoutDirection?
+        var saved: [LayoutDirection?] = []
+        var skip = 0
+        var next = 0
+        for (offset, character) in string.enumerated() {
+            while next < offsets.count, offsets[next] <= offset {
+                result.append(lastStrong)
+                next += 1
+            }
+            if next == offsets.count { break }
+            while skip < isolated.count, isolated[skip].upperBound <= offset { skip += 1 }
+            if character.unicodeScalars.contains(where: MarkdownContentDirection.isParagraphSeparator) {
+                lastStrong = nil
+                saved.removeAll()
+            } else if character == isolateEnd {
+                if let outer = saved.popLast() { lastStrong = outer }
+            } else if character == isolateStart || character == "\u{2067}" || character == "\u{2068}" {
+                saved.append(lastStrong)
+                lastStrong = nil
+            } else if !(skip < isolated.count && isolated[skip].contains(offset)),
+                      let direction = character.unicodeScalars.lazy.compactMap(MarkdownContentDirection.strongDirection(of:)).first {
+                lastStrong = direction
+            }
+        }
+        while result.count < offsets.count { result.append(lastStrong) }
+        return result
     }
 
     /// `Word`: an uppercase letter, then three or more letters, all lowercase.
