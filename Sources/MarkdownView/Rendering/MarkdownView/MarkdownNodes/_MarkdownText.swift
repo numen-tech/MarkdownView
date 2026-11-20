@@ -13,6 +13,8 @@ import SwiftUI
 struct _MarkdownText: View {
     var text: AttributedString
     @State private var attributedString: RenderedState?
+    /// numen fork (gemma4-qat#1765): the direction the text lays out in (its block's).
+    @Environment(\.layoutDirection) private var layoutDirection
     
     init(_ text: AttributedString) {
         self.text = text
@@ -20,10 +22,14 @@ struct _MarkdownText: View {
 
     var body: some View {
         Group {
+            // numen fork (gemma4-qat#1765): left-to-right runs isolated for display only.
             if let attributedString {
-                Text(Self.visibleText(input: text, rendered: attributedString))
+                Text(MarkdownBidiIsolation.isolated(
+                    Self.visibleText(input: text, rendered: attributedString),
+                    layoutDirection: layoutDirection
+                ))
             } else {
-                Text(text)
+                Text(MarkdownBidiIsolation.isolated(text, layoutDirection: layoutDirection))
             }
         }
         .task(id: text) {

@@ -43,6 +43,24 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
             .markdownResolvedHighlight(configuration.resolvedHighlight)
     }
 
+    /// numen fork (gemma4-qat#1765): `markup`'s child blocks in a column, each in its own
+    /// content direction (a block quote's, a list item's).
+    func makeBlockStack(forChildrenOf markup: any Markup, spacing: CGFloat) -> some View {
+        let blocks = markup.children.map { child in
+            var renderer = self
+            return renderer.visit(child)
+        }
+        return MarkdownBlockStack(blocks: blocks, spacing: spacing)
+            .environment(\.markdownMathContext, mathContext)
+            .environment(\.markdownElementRenderers, elementRenderers)
+            .markdownResolvedHighlight(configuration.resolvedHighlight)
+    }
+
+    /// numen fork (gemma4-qat#1765): the content direction of a block.
+    func contentDirection(of markup: any Markup) -> LayoutDirection? {
+        MarkdownContentDirection.of(markup, skipsMath: mathContext != nil)
+    }
+
     func visitDocument(_ document: Markdown.Document) -> MarkdownNodeView {
         var renderer = self
         let nodeViews = document.children.map {
@@ -109,21 +127,18 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
     
     func visitBlockQuote(_ blockQuote: BlockQuote) -> MarkdownNodeView {
         let content = MarkdownBlockQuoteStyleConfiguration.Content {
-            VStack(alignment: .leading, spacing: configuration.componentSpacing) {
-                ForEach(Array(blockQuote.children.enumerated()), id: \.offset) { _, child in
-                    MarkdownViewRenderer(
-                        configuration: configuration,
-                        mathContext: mathContext,
-                        elementRenderers: elementRenderers
-                    )
-                    .makeBody(for: child)
-                }
-            }
+            MarkdownViewRenderer(
+                configuration: configuration,
+                mathContext: mathContext,
+                elementRenderers: elementRenderers
+            )
+            .makeBlockStack(forChildrenOf: blockQuote, spacing: configuration.componentSpacing)
         }
         return MarkdownNodeView {
             MarkdownBlockQuote(content: content)
                 .tint(configuration.tintColors[.blockQuote, default: .accentColor])
         }
+        .withDirection(contentDirection(of: blockQuote))
     }
     
     func visitSoftBreak(_ softBreak: SoftBreak) -> MarkdownNodeView {
@@ -157,6 +172,8 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         var attributedString = AttributedString(stringLiteral: inlineCode.code)
         attributedString.foregroundColor = tintColor
         attributedString.backgroundColor = tintColor.opacity(0.1)
+        // numen fork (gemma4-qat#1765): code reads left to right inside right-to-left prose.
+        attributedString[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
         // numen fork: an inline code span the highlighted span touches is highlighted whole.
         if let highlight = configuration.resolvedHighlight, highlight.overlaps(inlineCode.range) {
             attributedString.backgroundColor = highlight.color
@@ -206,12 +223,14 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         MarkdownNodeView {
             MarkdownList(listItemsContainer: orderedList)
         }
+        .withDirection(contentDirection(of: orderedList))
     }
     
     func visitUnorderedList(_ unorderedList: UnorderedList) -> MarkdownNodeView {
         MarkdownNodeView {
             MarkdownList(listItemsContainer: unorderedList)
         }
+        .withDirection(contentDirection(of: unorderedList))
     }
     
     func visitTable(_ table: Markdown.Table) -> MarkdownNodeView {
@@ -219,13 +238,14 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         return MarkdownNodeView {
             MarkdownTable(table: renderedTable)
         }
+        .withDirection(contentDirection(of: table))
     }
     
     func visitTableHead(_ head: Markdown.Table.Head) -> MarkdownNodeView {
         MarkdownNodeView {
             MarkdownTableRow(
                 rowIndex: 0,
-                cells: Array(head.cells).map(renderedTableCell)
+                cells: Array(head.cells).map { renderedTableCell($0) }
             )
         }
     }
@@ -240,7 +260,7 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         MarkdownNodeView {
             MarkdownTableRow(
                 rowIndex: row.indexInParent + 1 /* header */,
-                cells: Array(row.cells).map(renderedTableCell)
+                cells: Array(row.cells).map { renderedTableCell($0) }
             )
         }
     }
@@ -256,20 +276,20 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
             let cellView = renderer.visit(child)
             cellViews.append(cellView)
         }
-        return MarkdownNodeView(
-            cellViews,
-            alignment: cell.horizontalAlignment
-        )
+        // The cell's column alignment is applied by `MarkdownTableRow`, in the direction the
+        // table lays out in.
+        return MarkdownNodeView(cellViews)
     }
     
     func visitParagraph(_ paragraph: Paragraph) -> MarkdownNodeView {
-        defaultVisit(paragraph)
+        defaultVisit(paragraph).withDirection(contentDirection(of: paragraph))
     }
     
     func visitHeading(_ heading: Heading) -> MarkdownNodeView {
         MarkdownNodeView {
             MarkdownHeading(heading: heading)
         }
+        .withDirection(contentDirection(of: heading))
     }
     
     func visitEmphasis(_ emphasis: Markdown.Emphasis) -> MarkdownNodeView {
@@ -321,6 +341,11 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
                     if underlineLinks {
                         attributes.underlineStyle = .single
                     }
+                    // numen fork (gemma4-qat#1765): an autolink (a URL or an email address as its
+                    // own label) reads left to right inside right-to-left prose.
+                    if MarkdownContentDirection.isAutolink(link) {
+                        attributes[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+                    }
                     return attributes
                 }())
             )
@@ -360,34 +385,40 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
     }
 }
 
-fileprivate extension MarkdownViewRenderer {
+extension MarkdownViewRenderer {
     func renderedTable(for table: Markdown.Table) -> MarkdownTableStyleConfiguration.Table {
         MarkdownTableStyleConfiguration.Table(
-            headerCells: Array(table.head.cells).map(renderedTableCell),
+            headerCells: Array(table.head.cells).map { renderedTableCell($0) },
             bodyRows: renderedTableRows(for: table.body)
         )
     }
 
-    func renderedTableRows(for tableBody: Markdown.Table.Body) -> [MarkdownTableStyleConfiguration.Table.Row] {
+    fileprivate func renderedTableRows(for tableBody: Markdown.Table.Body) -> [MarkdownTableStyleConfiguration.Table.Row] {
         tableBody.rows.map { row in
             MarkdownTableStyleConfiguration.Table.Row(
                 rowIndex: row.indexInParent + 1 /* header */,
-                cells: Array(row.cells).map(renderedTableCell)
+                cells: Array(row.cells).map { renderedTableCell($0) }
             )
         }
     }
 
-    func renderedTableCell(_ cell: Markdown.Table.Cell) -> MarkdownTableStyleConfiguration.Table.Cell {
-        let content = MarkdownViewRenderer(
+    fileprivate func renderedTableCell(_ cell: Markdown.Table.Cell) -> MarkdownTableStyleConfiguration.Table.Cell {
+        var renderer = MarkdownViewRenderer(
             configuration: configuration,
             mathContext: mathContext,
             elementRenderers: elementRenderers
         )
-        .makeBody(for: cell)
+        let content = renderer.makeBody(for: cell)
         
+        // numen fork (gemma4-qat#1765): explicit left/right columns stay physical in an RTL table.
+        // Both alignments go to the row, which picks by the direction the table lays out in: its
+        // own, or inherited when it has no strong letter (a numeric table in an Arabic quote).
+        let alignments = cell.directionalAlignments
         return MarkdownTableStyleConfiguration.Table.Cell(
-            horizontalAlignment: cell.horizontalAlignment,
-            textAlignment: cell.textAlignment,
+            horizontalAlignment: alignments.leftToRight.horizontal,
+            textAlignment: alignments.leftToRight.text,
+            rightToLeftHorizontalAlignment: alignments.rightToLeft.horizontal,
+            rightToLeftTextAlignment: alignments.rightToLeft.text,
             colspan: Int(cell.colspan),
             content: content
         )

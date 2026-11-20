@@ -4,6 +4,7 @@ import Markdown
 struct MarkdownTable: View {
     var table: MarkdownTableStyleConfiguration.Table
     @Environment(\.markdownTableStyle) private var tableStyle
+    @Environment(\.layoutDirection) private var layoutDirection
 
     init(table: MarkdownTableStyleConfiguration.Table) {
         self.table = table
@@ -18,7 +19,16 @@ struct MarkdownTable: View {
             .erasedToAnyView()
             .markdownTableCellStyleApplied()
             .coordinateSpace(name: MarkdownTable.CoordinateSpaceName)
+            // numen fork (gemma4-qat#1765): every row places its cells in the grid's columns by
+            // the table's direction, even a row a custom style lays out in another.
+            .environment(\.markdownTableLayoutDirection, layoutDirection)
     }
+}
+
+extension EnvironmentValues {
+    /// numen fork (gemma4-qat#1765): the direction the table lays out in, set by `MarkdownTable`.
+    /// Nil for a row rendered outside one.
+    @Entry var markdownTableLayoutDirection: LayoutDirection? = nil
 }
 
 extension MarkdownTable {
@@ -34,6 +44,8 @@ fileprivate extension View {
 }
 
 fileprivate struct MarkdownTableCellStylingViewModifier: ViewModifier {
+    @Environment(\.layoutDirection) private var layoutDirection
+
     func body(content: Content) -> some View {
         content
             .backgroundPreferenceValue(
@@ -44,6 +56,7 @@ fileprivate struct MarkdownTableCellStylingViewModifier: ViewModifier {
                         ForEach(styleCollection.rows) { row in
                             if let backgroundStyle = row.backgroundStyle {
                                 resolveShape(row.backgroundShape, style: backgroundStyle)
+                                    .environment(\.layoutDirection, layoutDirection)
                                     .offset(styleCollection.offset(for: row.position))
                                     .frame(height: styleCollection.heights[row.position.row])
                                     .frame(maxWidth: .infinity)
@@ -51,6 +64,9 @@ fileprivate struct MarkdownTableCellStylingViewModifier: ViewModifier {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    // numen fork (gemma4-qat#1765): the cell frames are physical points, and
+                    // `.offset` mirrors under right-to-left; place the layers left to right.
+                    .environment(\.layoutDirection, .leftToRight)
                 }
             }
             .backgroundPreferenceValue(
@@ -61,6 +77,7 @@ fileprivate struct MarkdownTableCellStylingViewModifier: ViewModifier {
                         ForEach(styleCollection.cells) { cell in
                             if let backgroundStyle = cell.backgroundStyle {
                                 resolveShape(cell.backgroundShape, style: backgroundStyle)
+                                    .environment(\.layoutDirection, layoutDirection)
                                     .offset(styleCollection.offset(for: cell.position))
                                     .frame(
                                         width: styleCollection.widths[cell.position.column],
@@ -70,6 +87,9 @@ fileprivate struct MarkdownTableCellStylingViewModifier: ViewModifier {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    // numen fork (gemma4-qat#1765): the cell frames are physical points, and
+                    // `.offset` mirrors under right-to-left; place the layers left to right.
+                    .environment(\.layoutDirection, .leftToRight)
                 }
             }
             .overlayPreferenceValue(
@@ -80,6 +100,9 @@ fileprivate struct MarkdownTableCellStylingViewModifier: ViewModifier {
                         ForEach(styleCollection.cells) { cell in
                             if let overlayContent = cell.overlayContent {
                                 overlayContent
+                                    // The caller's overlay lays out in the table's direction; only
+                                    // its placement is physical.
+                                    .environment(\.layoutDirection, layoutDirection)
                                     .offset(styleCollection.offset(for: cell.position))
                                     .frame(
                                         width: styleCollection.widths[cell.position.column],
@@ -89,6 +112,9 @@ fileprivate struct MarkdownTableCellStylingViewModifier: ViewModifier {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    // numen fork (gemma4-qat#1765): the cell frames are physical points, and
+                    // `.offset` mirrors under right-to-left; place the layers left to right.
+                    .environment(\.layoutDirection, .leftToRight)
                 }
             }
     }

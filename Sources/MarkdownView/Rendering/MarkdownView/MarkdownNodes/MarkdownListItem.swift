@@ -8,15 +8,12 @@ struct MarkdownListItem: View {
     @Environment(\.markdownElementRenderers) private var elementRenderers
     
     var body: some View {
-        VStack(alignment: .leading, spacing: configuration.componentSpacing) {
-            ForEach(Array(listItem.children.enumerated()), id: \.offset) { (_, child) in
-                MarkdownViewRenderer(
-                    configuration: configuration,
-                    mathContext: mathContext,
-                    elementRenderers: elementRenderers
-                )
-                .makeBody(for: child)
-            }
-        }
+        // numen fork (gemma4-qat#1765): each child block in its own content direction.
+        MarkdownViewRenderer(
+            configuration: configuration,
+            mathContext: mathContext,
+            elementRenderers: elementRenderers
+        )
+        .makeBlockStack(forChildrenOf: listItem, spacing: configuration.componentSpacing)
     }
 }

@@ -16,6 +16,8 @@ import Markdown
 ///
 /// Keep environment-dependent work in a separate `View`. The style is a factory object, so a nested view is the correct place to read `@Environment` values.
 ///
+/// Don't change `layoutDirection` inside a style, whether on the grid or on a row. A table lays out in its content's direction (or its container's), and every row aligns the grid's columns by that direction, so an explicit `:---` or `---:` column keeps its physical side. A direction set inside the style isn't seen by that alignment. To lay a table out in another direction, set it on the `MarkdownView`.
+///
 /// The following example creates a compact table style with a tinted header, alternating row backgrounds, cell padding, and cell borders.
 ///
 /// ```swift
