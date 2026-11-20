@@ -51,6 +51,9 @@ fileprivate struct MarkdownTableCellStylingViewModifier: ViewModifier {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    // numen fork (gemma4-qat#1765): the cell frames are physical points, and
+                    // `.offset` mirrors under right-to-left; place the layers left to right.
+                    .environment(\.layoutDirection, .leftToRight)
                 }
             }
             .backgroundPreferenceValue(
@@ -70,6 +73,9 @@ fileprivate struct MarkdownTableCellStylingViewModifier: ViewModifier {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    // numen fork (gemma4-qat#1765): the cell frames are physical points, and
+                    // `.offset` mirrors under right-to-left; place the layers left to right.
+                    .environment(\.layoutDirection, .leftToRight)
                 }
             }
             .overlayPreferenceValue(
@@ -89,6 +95,9 @@ fileprivate struct MarkdownTableCellStylingViewModifier: ViewModifier {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    // numen fork (gemma4-qat#1765): the cell frames are physical points, and
+                    // `.offset` mirrors under right-to-left; place the layers left to right.
+                    .environment(\.layoutDirection, .leftToRight)
                 }
             }
     }

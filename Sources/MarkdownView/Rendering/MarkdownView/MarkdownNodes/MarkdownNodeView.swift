@@ -2,6 +2,10 @@ import SwiftUI
 
 struct MarkdownNodeView: View {
     private var storage: Either<AttributedString, AnyView>
+    /// numen fork (gemma4-qat#1765): the reading direction of a block's content
+    /// (`MarkdownContentDirection`), nil for inline nodes and for blocks with no strong character,
+    /// which take their container's. A block with one lays out in it.
+    var direction: LayoutDirection?
     
     enum ContentType: String {
         case text, view
@@ -29,6 +33,7 @@ struct MarkdownNodeView: View {
         let content = content()
         if let markdownNode = content as? MarkdownNodeView {
             storage = markdownNode.storage
+            direction = markdownNode.direction
         } else {
             storage = .right(AnyView(content))
         }
@@ -44,6 +49,19 @@ struct MarkdownNodeView: View {
         }
         .lineLimit(nil)
         .fixedSize(horizontal: false, vertical: true)
+        // Not `.environment` over an `@Environment` read: `body` is also called directly, outside
+        // the view graph (`FlowLayout`'s children, a single composed node), where a read gives
+        // the default direction.
+        .transformEnvironment(\.layoutDirection) { layoutDirection in
+            if let direction { layoutDirection = direction }
+        }
+    }
+
+    /// This node with its content's reading direction (nil keeps the container's).
+    func withDirection(_ direction: LayoutDirection?) -> MarkdownNodeView {
+        var node = self
+        node.direction = direction
+        return node
     }
     
     var asAttributedString: AttributedString? {
@@ -70,22 +88,33 @@ extension MarkdownNodeView {
     ) {
         var composedContents = [MarkdownNodeView]()
         var attributedString = AttributedString()
+        // numen fork (gemma4-qat#1765): blocks merge into one text only while their directions
+        // agree (a block with none joins its neighbour); inline nodes carry none.
+        var textDirection: LayoutDirection?
         for content in contents {
             if case let .left(text) = content.storage {
+                if layoutPolicy == .linebreak, !attributedString.characters.isEmpty,
+                   let direction = content.direction, let current = textDirection, direction != current {
+                    composedContents.append(MarkdownNodeView(attributedString).withDirection(textDirection))
+                    attributedString = AttributedString()
+                    textDirection = nil
+                }
                 if layoutPolicy == .linebreak && !attributedString.characters.isEmpty {
                     attributedString += "\n\n"
                 }
                 attributedString += text
+                textDirection = textDirection ?? content.direction
             } else {
                 if !attributedString.characters.isEmpty {
-                    composedContents.append(MarkdownNodeView(attributedString))
+                    composedContents.append(MarkdownNodeView(attributedString).withDirection(textDirection))
                     attributedString = AttributedString()
+                    textDirection = nil
                 }
                 composedContents.append(content)
             }
         }
         if !attributedString.characters.isEmpty {
-            composedContents.append(MarkdownNodeView(attributedString))
+            composedContents.append(MarkdownNodeView(attributedString).withDirection(textDirection))
         }
         
         if composedContents.count == 1 {
@@ -94,6 +123,7 @@ extension MarkdownNodeView {
             } else {
                 storage = .right(AnyView(composedContents[0].body))
             }
+            direction = composedContents[0].direction
         } else {
             if layoutPolicy == .adaptive {
                 let composedView = FlowLayout(verticleSpacing: 8) {
@@ -103,12 +133,8 @@ extension MarkdownNodeView {
                 }
                 storage = .right(AnyView(composedView))
             } else {
-                let composedView = VStack(alignment: alignment, spacing: 8) {
-                    ForEach(composedContents.indices, id: \.self) {
-                        composedContents[$0].body
-                    }
-                }
-                storage = .right(AnyView(composedView))
+                // numen fork (gemma4-qat#1765): each block in its own direction.
+                storage = .right(AnyView(MarkdownBlockStack(blocks: composedContents, spacing: 8)))
             }
         }
     }

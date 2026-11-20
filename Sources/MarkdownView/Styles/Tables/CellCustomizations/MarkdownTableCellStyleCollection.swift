@@ -128,10 +128,13 @@ struct MarkdownTableCellStyleCollection: Sendable {
         let normalWidths = zip(maxXs, minXs).map(-)
         
         var widths = normalWidths
-        let additionalWidths = zip(minXs.dropFirst(), maxXs.dropLast()).map(-)
-        
-        for (index, additionalWidth) in additionalWidths.enumerated() {
-            widths[index] += additionalWidth
+        // numen fork (gemma4-qat#1765): each column reaches the near edge of the next one. Cell
+        // frames are physical, so under a right-to-left layout the next column lies to the left
+        // and the gap is on this column's left side.
+        for index in widths.indices.dropLast() {
+            widths[index] += Self.isReversed(at: index, minXs: minXs)
+                ? minXs[index] - maxXs[index + 1]
+                : minXs[index + 1] - maxXs[index]
         }
         cacheBox.updateValue(widths, forKey: .widths)
         return widths
@@ -154,6 +157,11 @@ struct MarkdownTableCellStyleCollection: Sendable {
         return heights
     }
     
+    /// Whether column `index + 1` lies to the left of column `index` (a right-to-left table).
+    private static func isReversed(at index: Int, minXs: [CGFloat]) -> Bool {
+        index + 1 < minXs.count && minXs[index + 1] < minXs[index]
+    }
+
     func offset(for position: MarkdownTableCellStyle.Position) -> CGSize {
         guard storage[position] != nil else { return .zero }
         
@@ -161,8 +169,14 @@ struct MarkdownTableCellStyleCollection: Sendable {
             return cached as! CGSize
         }
         
+        // numen fork (gemma4-qat#1765): a right-to-left column's span starts at the next
+        // column's right edge (`widths`). Physical points: the layers are drawn left to right.
+        let column = position.column
+        let x = column + 1 < minXs.count && Self.isReversed(at: column, minXs: minXs)
+            ? maxXs[column + 1]
+            : minXs[column]
         let offset = CGSize(
-            width: minXs[position.column],
+            width: x,
             height: minYs[position.row]
         )
         cacheBox.updateValue(offset, forKey: .offsets(position))

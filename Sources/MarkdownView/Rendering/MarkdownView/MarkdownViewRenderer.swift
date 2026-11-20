@@ -43,6 +43,24 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
             .markdownResolvedHighlight(configuration.resolvedHighlight)
     }
 
+    /// numen fork (gemma4-qat#1765): `markup`'s child blocks in a column, each in its own
+    /// content direction (a block quote's, a list item's).
+    func makeBlockStack(forChildrenOf markup: any Markup, spacing: CGFloat) -> some View {
+        let blocks = markup.children.map { child in
+            var renderer = self
+            return renderer.visit(child)
+        }
+        return MarkdownBlockStack(blocks: blocks, spacing: spacing)
+            .environment(\.markdownMathContext, mathContext)
+            .environment(\.markdownElementRenderers, elementRenderers)
+            .markdownResolvedHighlight(configuration.resolvedHighlight)
+    }
+
+    /// numen fork (gemma4-qat#1765): the content direction of a block.
+    func contentDirection(of markup: any Markup) -> LayoutDirection? {
+        MarkdownContentDirection.of(markup, skipsMath: mathContext != nil)
+    }
+
     func visitDocument(_ document: Markdown.Document) -> MarkdownNodeView {
         var renderer = self
         let nodeViews = document.children.map {
@@ -109,21 +127,18 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
     
     func visitBlockQuote(_ blockQuote: BlockQuote) -> MarkdownNodeView {
         let content = MarkdownBlockQuoteStyleConfiguration.Content {
-            VStack(alignment: .leading, spacing: configuration.componentSpacing) {
-                ForEach(Array(blockQuote.children.enumerated()), id: \.offset) { _, child in
-                    MarkdownViewRenderer(
-                        configuration: configuration,
-                        mathContext: mathContext,
-                        elementRenderers: elementRenderers
-                    )
-                    .makeBody(for: child)
-                }
-            }
+            MarkdownViewRenderer(
+                configuration: configuration,
+                mathContext: mathContext,
+                elementRenderers: elementRenderers
+            )
+            .makeBlockStack(forChildrenOf: blockQuote, spacing: configuration.componentSpacing)
         }
         return MarkdownNodeView {
             MarkdownBlockQuote(content: content)
                 .tint(configuration.tintColors[.blockQuote, default: .accentColor])
         }
+        .withDirection(contentDirection(of: blockQuote))
     }
     
     func visitSoftBreak(_ softBreak: SoftBreak) -> MarkdownNodeView {
@@ -157,6 +172,8 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         var attributedString = AttributedString(stringLiteral: inlineCode.code)
         attributedString.foregroundColor = tintColor
         attributedString.backgroundColor = tintColor.opacity(0.1)
+        // numen fork (gemma4-qat#1765): code reads left to right inside right-to-left prose.
+        attributedString[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
         // numen fork: an inline code span the highlighted span touches is highlighted whole.
         if let highlight = configuration.resolvedHighlight, highlight.overlaps(inlineCode.range) {
             attributedString.backgroundColor = highlight.color
@@ -206,12 +223,14 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         MarkdownNodeView {
             MarkdownList(listItemsContainer: orderedList)
         }
+        .withDirection(contentDirection(of: orderedList))
     }
     
     func visitUnorderedList(_ unorderedList: UnorderedList) -> MarkdownNodeView {
         MarkdownNodeView {
             MarkdownList(listItemsContainer: unorderedList)
         }
+        .withDirection(contentDirection(of: unorderedList))
     }
     
     func visitTable(_ table: Markdown.Table) -> MarkdownNodeView {
@@ -219,6 +238,7 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
         return MarkdownNodeView {
             MarkdownTable(table: renderedTable)
         }
+        .withDirection(contentDirection(of: table))
     }
     
     func visitTableHead(_ head: Markdown.Table.Head) -> MarkdownNodeView {
@@ -263,13 +283,14 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
     }
     
     func visitParagraph(_ paragraph: Paragraph) -> MarkdownNodeView {
-        defaultVisit(paragraph)
+        defaultVisit(paragraph).withDirection(contentDirection(of: paragraph))
     }
     
     func visitHeading(_ heading: Heading) -> MarkdownNodeView {
         MarkdownNodeView {
             MarkdownHeading(heading: heading)
         }
+        .withDirection(contentDirection(of: heading))
     }
     
     func visitEmphasis(_ emphasis: Markdown.Emphasis) -> MarkdownNodeView {
@@ -320,6 +341,11 @@ struct MarkdownViewRenderer: @preconcurrency MarkupVisitor {
                         .foregroundColor(tintColor)
                     if underlineLinks {
                         attributes.underlineStyle = .single
+                    }
+                    // numen fork (gemma4-qat#1765): a bare link (its URL as its label) reads
+                    // left to right inside right-to-left prose.
+                    if link.plainText == destination {
+                        attributes[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
                     }
                     return attributes
                 }())

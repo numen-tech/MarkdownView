@@ -22,23 +22,24 @@ struct MarkdownList<List: ListItemContainer>: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: configuration.componentSpacing) {
-            ForEach(
-                Array(listItemsContainer.listItems.enumerated()),
-                id: \.offset
-            ) { (index, listItem) in
+        // numen fork (gemma4-qat#1765): each item (marker and content) in its own content
+        // direction, so a right-to-left item has its marker on the right.
+        let renderer = MarkdownViewRenderer(
+            configuration: configuration,
+            mathContext: mathContext,
+            elementRenderers: elementRenderers
+        )
+        let items = Array(listItemsContainer.listItems.enumerated()).map { (index, listItem) in
+            MarkdownNodeView {
                 HStack(alignment: .firstTextBaseline) {
                     CheckboxOrMarker(list: self, listItem: listItem, index: index)
                         .padding(.leading, depth == 0 ? configuration.listConfiguration.leadingIndentation : 0)
-                    MarkdownViewRenderer(
-                        configuration: configuration,
-                        mathContext: mathContext,
-                        elementRenderers: elementRenderers
-                    )
-                    .makeBody(for: listItem)
+                    renderer.makeBody(for: listItem)
                 }
             }
+            .withDirection(renderer.contentDirection(of: listItem))
         }
+        MarkdownBlockStack(blocks: items, spacing: configuration.componentSpacing)
     }
     
     struct CheckboxOrMarker: View {
