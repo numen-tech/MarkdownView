@@ -251,6 +251,16 @@ struct MarkdownContentDirectionTests {
         #expect(shown("راجع https://example.com/v 2 ok") == "راجع \u{2066}https://example.com/v\u{2069} \u{2066}2\u{00A0}ok\u{2069}")
         // No space, no swap: `5GB` is one run already.
         #expect(shown("حجم 5GB فقط") == "حجم 5GB فقط")
+        // A sign, a range, a label's colon, an accented unit, a grouped number's unit.
+        #expect(shown("التأخير -5 ms") == "التأخير \u{2066}-5\u{00A0}ms\u{2069}")
+        #expect(shown("بين 5-10 ms") == "بين \u{2066}5-10\u{00A0}ms\u{2069}")
+        #expect(shown("المدة:12 ms") == "المدة:\u{2066}12\u{00A0}ms\u{2069}")
+        #expect(shown("المسافة 2 mètres") == "المسافة \u{2066}2\u{00A0}mètres\u{2069}")
+        #expect(shown("גודל 1 234 567 MB") == "גודל \u{2066}1\u{00A0}234\u{00A0}567\u{00A0}MB\u{2069}")
+        // One phrase, one isolate: the two measures keep their English order.
+        #expect(shown("من 2 GB to 4 GB") == "من \u{2066}2\u{00A0}GB to 4 GB\u{2069}")
+        // An isolate written in the text hides its letters from W7 too.
+        #expect(shown("שלום \u{2066}abc\u{2069} 2 GB") == "שלום \u{2066}abc\u{2069} \u{2066}2\u{00A0}GB\u{2069}")
     }
 
     @Test("Inline code keeps its own spaces", .tags(.rendering))
@@ -262,6 +272,12 @@ struct MarkdownContentDirectionTests {
         let text = AttributedString("שלום ") + code + AttributedString(" ו ") + phone
         let shown = String(MarkdownBidiIsolation.isolated(text, layoutDirection: .rightToLeft).characters)
         #expect(shown == "שלום \u{2066}x = 1 in items\u{2069} ו \u{2066}+966 50 123 4567\u{2069}")
+        // A phone number that crosses a code span keeps the code's space and joins the rest.
+        var middle = AttributedString("50 123")
+        middle[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        let crossing = AttributedString("שלום +966 ") + middle + AttributedString(" 4567")
+        let crossed = String(MarkdownBidiIsolation.isolated(crossing, layoutDirection: .rightToLeft).characters)
+        #expect(crossed == "שלום \u{2066}+966\u{00A0}50 123\u{00A0}4567\u{2069}")
     }
 
     @Test("Left-to-right text is unchanged, measures and phone numbers included", .tags(.rendering))
@@ -308,7 +324,8 @@ struct MarkdownContentDirectionTests {
                 #expect(xs == xs.sorted(), "width \(width): +966 50 123 4567 in order")
             }
             let unit = try #require(Self.utf16Range(of: "1\u{00A0}ms", in: shown))
-            if let line = lines.first(where: { NSIntersectionRange($0.range, unit) == unit }) {
+            do {
+                let line = try #require(lines.first { NSIntersectionRange($0.range, unit) == unit }, "width \(width): 1 ms on one line")
                 let one = CTLineGetOffsetForStringIndex(line.line, unit.location, nil)
                 let m = CTLineGetOffsetForStringIndex(line.line, unit.location + 2, nil)
                 #expect(one < m, "width \(width): 1 ms, not ms 1")

@@ -53,11 +53,11 @@ enum MarkdownBidiIsolation {
             }
             spans.append(span)
         }
-        for measure in acceptedMeasures(in: string, isolated: merge(spans)) {
+        for measure in acceptedMeasures(in: string, isolated: merge(spans), numbers: found) {
             spans.append(measure.whole)
             found.append(measure.unit)
         }
-        let unbroken = outside(found.sorted { $0.lowerBound < $1.lowerBound }, tagged)
+        let unbroken = subtracting(merge(tagged), from: found.sorted { $0.lowerBound < $1.lowerBound })
         var unbrokenCursor = 0
         let merged = merge(spans)
         guard !merged.isEmpty else { return text }
@@ -115,53 +115,82 @@ enum MarkdownBidiIsolation {
         return piece
     }
 
-    /// `ranges` (sorted) less those wholly inside one of `within` (sorted): a number inside inline
-    /// code keeps the code's own spaces. One that crosses a code span's edge is kept.
-    static func outside(_ ranges: [Range<Int>], _ within: [Range<Int>]) -> [Range<Int>] {
+    /// `ranges` (sorted) with the parts inside `within` (sorted, disjoint) cut out: inline code keeps
+    /// its own spaces, a phone number that crosses a code span's edge keeps the rest together.
+    static func subtracting(_ within: [Range<Int>], from ranges: [Range<Int>]) -> [Range<Int>] {
+        guard !within.isEmpty else { return ranges }
+        var result: [Range<Int>] = []
         var cursor = 0
-        return ranges.filter { range in
+        for range in ranges {
             while cursor < within.count, within[cursor].upperBound <= range.lowerBound { cursor += 1 }
-            return !(cursor < within.count && within[cursor].lowerBound <= range.lowerBound
-                && range.upperBound <= within[cursor].upperBound)
+            var start = range.lowerBound
+            var index = cursor
+            while index < within.count, within[index].lowerBound < range.upperBound {
+                if within[index].lowerBound > start { result.append(start..<within[index].lowerBound) }
+                start = max(start, within[index].upperBound)
+                index += 1
+            }
+            if start < range.upperBound { result.append(start..<range.upperBound) }
         }
+        return result.sorted { $0.lowerBound < $1.lowerBound }
     }
 
     /// The measures of `string` (`measure`) that get an isolate, as character offsets: the whole
     /// match, and its number and first word, which never break. One forward walk keeps the last
-    /// strong direction outside the runs already isolated (`isolated`, sorted and merged, and the
-    /// measures taken so far), reset at each newline. A measure after a left-to-right letter is
-    /// left alone: there rule W7 already gives the number the word's direction and the phrase is
-    /// one run, which an isolate would split (`the value 10 GB`). A measure that starts inside an
-    /// isolated run belongs to it (inline code, a URL, a phone number).
-    static func acceptedMeasures(in string: String, isolated: [Range<Int>]) -> [(whole: Range<Int>, unit: Range<Int>)] {
+    /// strong direction outside the runs already isolated (`isolated`, sorted and merged, the
+    /// measures taken so far, and isolates written in the text itself), reset at each newline. A
+    /// measure after a left-to-right letter is left alone: there rule W7 already gives the number
+    /// the word's direction and the phrase is one run, which an isolate would split (`the value
+    /// 10 GB`). A measure that starts inside an isolated run belongs to it (inline code, a URL),
+    /// except that a found grouped number (`numbers`) ending where the measure's number ends
+    /// takes the unit into its isolate (`1 234 567 MB`).
+    static func acceptedMeasures(
+        in string: String, isolated: [Range<Int>], numbers: [Range<Int>]
+    ) -> [(whole: Range<Int>, unit: Range<Int>)] {
         guard string.contains(where: { $0.isASCII && $0.isNumber }) else { return [] }
         let matches = measure.matches(in: string, range: NSRange(string.startIndex..., in: string)).compactMap {
-            match -> (whole: Range<String.Index>, unit: Range<String.Index>)? in
-            guard let whole = Range(match.range, in: string), let unit = Range(match.range(at: 1), in: string) else { return nil }
-            return (whole, unit)
+            match -> [Range<String.Index>]? in
+            guard let whole = Range(match.range, in: string), let unit = Range(match.range(at: 1), in: string),
+                  let number = Range(match.range(at: 2), in: string) else { return nil }
+            return [whole, unit, number]
         }
         guard !matches.isEmpty else { return [] }
-        let offsets = characterOffsets(of: matches.flatMap { [$0.whole, $0.unit] }, in: string)
-        let candidates = matches.indices.map { (whole: offsets[2 * $0], unit: offsets[2 * $0 + 1]) }
+        let offsets = characterOffsets(of: matches.flatMap { $0 }, in: string)
+        let candidates = matches.indices.map { (whole: offsets[3 * $0], unit: offsets[3 * $0 + 1], number: offsets[3 * $0 + 2]) }
         var accepted: [(whole: Range<Int>, unit: Range<Int>)] = []
         var lastStrong: LayoutDirection?
+        var literalDepth = 0
         var skip = 0
+        var number = 0
         var candidate = 0
         var acceptedEnd = 0
         for (offset, character) in string.enumerated() {
             while skip < isolated.count, isolated[skip].upperBound <= offset { skip += 1 }
             let insideIsolated = skip < isolated.count && isolated[skip].contains(offset)
+            while number < numbers.count, numbers[number].upperBound <= offset { number += 1 }
             while candidate < candidates.count, candidates[candidate].whole.lowerBound <= offset {
                 let measure = candidates[candidate]
                 candidate += 1
-                guard measure.whole.lowerBound == offset, offset >= acceptedEnd, !insideIsolated,
+                guard measure.whole.lowerBound == offset, offset >= acceptedEnd, literalDepth == 0,
                       lastStrong != .leftToRight else { continue }
-                accepted.append(measure)
+                if !insideIsolated {
+                    accepted.append((measure.whole, measure.unit))
+                } else if number < numbers.count, numbers[number].contains(offset),
+                          numbers[number].upperBound == measure.number.upperBound {
+                    accepted.append((numbers[number].lowerBound..<measure.whole.upperBound, measure.unit))
+                } else {
+                    continue
+                }
                 acceptedEnd = measure.whole.upperBound
             }
             if character.isNewline {
                 lastStrong = nil
-            } else if !insideIsolated, offset >= acceptedEnd,
+                literalDepth = 0
+            } else if character == isolateEnd {
+                literalDepth = max(0, literalDepth - 1)
+            } else if character == isolateStart || character == "\u{2067}" || character == "\u{2068}" {
+                literalDepth += 1
+            } else if !insideIsolated, offset >= acceptedEnd, literalDepth == 0,
                       let direction = character.unicodeScalars.lazy.compactMap(MarkdownContentDirection.strongDirection(of:)).first {
                 lastStrong = direction
             }
@@ -299,14 +328,23 @@ enum MarkdownBidiIsolation {
         pattern: #"(?<![\p{L}\p{N}])[0-9]{4}-[0-9]{2}-[0-9]{2}(?![\p{L}\p{N}])"#
     )
 
-    /// A measure: a whole ASCII number (`12.5`, `12:30`, `1/2`), then one or more Latin words, each
-    /// after one space or no-break space: `1 ms`, `2 GB RAM`, `40 km/h`, `3 files in the folder`.
-    /// Between the number and the word a space takes the paragraph's direction and the two swap
-    /// (gemma4-qat#1986). Group 1 is the number and its first word, the part that never breaks. A
-    /// number with no space before its unit (`5GB`) is one run already.
-    private static let measure = try! NSRegularExpression(
-        pattern: #"(?<![\p{L}\p{N}.,:/])([0-9]+(?:[.,:/][0-9]+)*[ \x{00A0}][A-Za-z][A-Za-z0-9]*(?:/[A-Za-z]+)?)(?:[ \x{00A0}][A-Za-z][A-Za-z0-9]*(?:/[A-Za-z]+)?)*(?![\p{L}\p{N}])"#
-    )
+    /// A measure: a whole ASCII number, signed, decimal, a time, a fraction or a range too (`-5`,
+    /// `12.5`, `12:30`, `1/2`, `5-10`), then one or more Latin words (accented ones too), each after
+    /// one space or no-break space; numbers may follow among the words: `1 ms`, `2 GB RAM`, `40 km/h`,
+    /// `2 GB to 4 GB`, `3 files in the folder`. Between the number and the word a space takes the
+    /// paragraph's direction and the two swap (gemma4-qat#1986). Group 1 is the number and its first
+    /// word, the part that never breaks, group 2 the number. A number with no space before its unit
+    /// (`5GB`) is one run already, and a sentence's full stop stays outside (`1 ms.`).
+    private static let measure: NSRegularExpression = {
+        let number = #"[0-9]+(?:[.,:/\-\x{2013}][0-9]+)*"#
+        let word = #"\p{Latin}[\p{Latin}\p{M}0-9]*(?:/\p{Latin}+)?"#
+        let space = #"[ \x{00A0}]"#
+        return try! NSRegularExpression(
+            pattern: #"(?<![\p{L}\p{N}])(?<![0-9][.,:/\-\x{2013}])"#
+                + "(((?:\\+|-|\u{2212})?\(number))\(space)\(word))(?:\(space)(?:\(word)|\(number)))*"
+                + #"(?![\p{L}\p{N}\p{M}])"#
+        )
+    }()
 
     /// Digits in three or more groups split by single spaces, no-break spaces, dots or hyphens,
     /// optionally after a `+`, six digits or more: phone numbers and grouped thousands. A range
