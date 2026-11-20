@@ -1,4 +1,8 @@
 import Markdown
+#if canImport(AppKit)
+import AppKit
+import CoreText
+#endif
 import SwiftUI
 import Testing
 
@@ -207,7 +211,7 @@ struct MarkdownContentDirectionTests {
         let shown = String(MarkdownBidiIsolation.isolated(attributed, layoutDirection: .leftToRight).characters)
         #expect(shown.contains("\u{2066}--update-refs\u{2069}"))
         #expect(shown.contains("\u{2066}https://git-scm.com/docs/git-rebase\u{2069}"))
-        #expect(shown.contains("\u{2066}+966 50 123 4567\u{2069}."))
+        #expect(shown.contains("\u{2066}+966\u{00A0}50\u{00A0}123\u{00A0}4567\u{2069}."))
         // The isolates are display-only: the rendered node itself holds none.
         #expect(!String(attributed.characters).contains("\u{2066}"))
     }
@@ -220,7 +224,7 @@ struct MarkdownContentDirectionTests {
         first[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
         let text = AttributedString("قيمة ") + first + AttributedString(" و +966 ") + code + AttributedString(" 123 4567 ثم")
         let shown = String(MarkdownBidiIsolation.isolated(text, layoutDirection: .rightToLeft).characters)
-        #expect(shown == "قيمة \u{2066}a\u{2069} و \u{2066}+966 50 123 4567\u{2069} ثم")
+        #expect(shown == "قيمة \u{2066}a\u{2069} و \u{2066}+966\u{00A0}50\u{00A0}123\u{00A0}4567\u{2069} ثم")
     }
 
     @Test("Sentence punctuation stays outside a URL; two dates are two runs", .tags(.rendering))
@@ -230,10 +234,171 @@ struct MarkdownContentDirectionTests {
         let dates = String(MarkdownBidiIsolation.isolated(AttributedString("من 2024-05-01 2025-06-01"), layoutDirection: .rightToLeft).characters)
         #expect(dates == "من \u{2066}2024-05-01\u{2069} \u{2066}2025-06-01\u{2069}")
         let phone = String(MarkdownBidiIsolation.isolated(AttributedString("اتصل +1 212-555-0123"), layoutDirection: .rightToLeft).characters)
-        #expect(phone == "اتصل \u{2066}+1 212-555-0123\u{2069}")
+        #expect(phone == "اتصل \u{2066}+1\u{00A0}212-555-0123\u{2069}")
         let comma = String(MarkdownBidiIsolation.isolated(AttributedString("راجع https://example.com،ثم"), layoutDirection: .rightToLeft).characters)
         #expect(comma == "راجع \u{2066}https://example.com\u{2069}،ثم")
     }
+
+
+    // MARK: Numbers kept whole (gemma4-qat#1986)
+
+    @Test("A number with Latin words after it is isolated; one after a Latin word is not", .tags(.rendering))
+    func measures() {
+        func shown(_ text: String) -> String {
+            String(MarkdownBidiIsolation.isolated(AttributedString(text), layoutDirection: .rightToLeft).characters)
+        }
+        #expect(shown("خلال أقل من 1 ms.") == "خلال أقل من \u{2066}1\u{00A0}ms\u{2069}.")
+        #expect(shown("ذاكرة 2 GB RAM فقط") == "ذاكرة \u{2066}2\u{00A0}GB RAM\u{2069} فقط")
+        #expect(shown("السرعة 40 km/h و 12.5 GB") == "السرعة \u{2066}40\u{00A0}km/h\u{2069} و \u{2066}12.5\u{00A0}GB\u{2069}")
+        // A whole number: a time or a fraction is not cut at its `:` or `/`.
+        #expect(shown("الموعد 12:30 UTC") == "الموعد \u{2066}12:30\u{00A0}UTC\u{2069}")
+        #expect(shown("أضف 1/2 cup") == "أضف \u{2066}1/2\u{00A0}cup\u{2069}")
+        // Only the number and its first word are kept together; the clause still wraps.
+        #expect(shown("נמצאו 3 files in the current directory") == "נמצאו \u{2066}3\u{00A0}files in the current directory\u{2069}")
+        // After a Latin word the number already reads with it (rule W7): no isolate to split them.
+        #expect(shown("القيمة value 10 GB هنا") == "القيمة value 10 GB هنا")
+        // A Latin letter inside an isolate is invisible to W7, so it does not count as one.
+        #expect(shown("خلال 1 ms، 2 GB") == "خلال \u{2066}1\u{00A0}ms\u{2069}، \u{2066}2\u{00A0}GB\u{2069}")
+        #expect(shown("راجع https://example.com/v 2 ok") == "راجع \u{2066}https://example.com/v\u{2069} \u{2066}2\u{00A0}ok\u{2069}")
+        // No space, no swap: `5GB` is one run already.
+        #expect(shown("حجم 5GB فقط") == "حجم 5GB فقط")
+        // A sign, a range, a label's colon, an accented unit, a grouped number's unit.
+        #expect(shown("التأخير -5 ms") == "التأخير \u{2066}-5\u{00A0}ms\u{2069}")
+        #expect(shown("بين 5-10 ms") == "بين \u{2066}5-10\u{00A0}ms\u{2069}")
+        #expect(shown("المدة:12 ms") == "المدة:\u{2066}12\u{00A0}ms\u{2069}")
+        #expect(shown("المسافة 2 mètres") == "المسافة \u{2066}2\u{00A0}mètres\u{2069}")
+        #expect(shown("גודל 1 234 567 MB") == "גודל \u{2066}1\u{00A0}234\u{00A0}567\u{00A0}MB\u{2069}")
+        // One phrase, one isolate: the two measures keep their English order.
+        #expect(shown("من 2 GB to 4 GB") == "من \u{2066}2\u{00A0}GB to 4\u{00A0}GB\u{2069}")
+        #expect(shown("من -5 ms to +5 ms") == "من \u{2066}-5\u{00A0}ms to +5\u{00A0}ms\u{2069}")
+        // A capitalised word after the number is a name or a clause, not a unit.
+        #expect(shown("في عام 2024 Apple أعلنت") == "في عام 2024 Apple أعلنت")
+        // Two groups are two numbers: the floor stays out of the files' isolate.
+        #expect(shown("في الطابق 3 100 files") == "في الطابق 3 \u{2066}100\u{00A0}files\u{2069}")
+        // Text that writes its own isolates is left as written inside them, and W7 resumes after.
+        #expect(shown("abc \u{2068}2 GB שלום\u{2069}") == "abc \u{2068}2 GB שלום\u{2069}")
+        #expect(shown("שלום \u{2066}abc\u{2069} 2 GB") == "שלום \u{2066}abc\u{2069} \u{2066}2\u{00A0}GB\u{2069}")
+        // An isolate written in the text hides its letters from W7 too.
+        #expect(shown("שלום \u{2066}abc\u{2069} 2 GB") == "שלום \u{2066}abc\u{2069} \u{2066}2\u{00A0}GB\u{2069}")
+    }
+
+    @Test("Inline code keeps its own spaces", .tags(.rendering))
+    func codeKeepsSpaces() {
+        var code = AttributedString("x = 1 in items")
+        code[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        var phone = AttributedString("+966 50 123 4567")
+        phone[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        let text = AttributedString("שלום ") + code + AttributedString(" ו ") + phone
+        let shown = String(MarkdownBidiIsolation.isolated(text, layoutDirection: .rightToLeft).characters)
+        #expect(shown == "שלום \u{2066}x = 1 in items\u{2069} ו \u{2066}+966 50 123 4567\u{2069}")
+        // A phone number that crosses a code span keeps the code's space and joins the rest.
+        var middle = AttributedString("50 123")
+        middle[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        let crossing = AttributedString("שלום +966 ") + middle + AttributedString(" 4567")
+        let crossed = String(MarkdownBidiIsolation.isolated(crossing, layoutDirection: .rightToLeft).characters)
+        #expect(crossed == "שלום \u{2066}+966\u{00A0}50 123\u{00A0}4567\u{2069}")
+        // A measure in code does not hide the one after it.
+        var unit = AttributedString("1 ms")
+        unit[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        let after = String(MarkdownBidiIsolation.isolated(AttributedString("המדה ") + unit + AttributedString(" 2 GB"), layoutDirection: .rightToLeft).characters)
+        #expect(after == "המדה \u{2066}1 ms\u{2069} \u{2066}2\u{00A0}GB\u{2069}")
+        // A date inside code stays the code's.
+        var version = AttributedString("v2/2024-05-01")
+        version[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        let dated = String(MarkdownBidiIsolation.isolated(AttributedString("גרסה ") + version + AttributedString(" results"), layoutDirection: .rightToLeft).characters)
+        #expect(dated == "גרסה \u{2066}v2/2024-05-01\u{2069} results")
+        var released = AttributedString("on 2024-05-01")
+        released[AttributeScopes.MarkdownViewAttributeScope.IsolatesLeftToRightAttribute.self] = true
+        let ended = String(MarkdownBidiIsolation.isolated(AttributedString("גרסה ") + released + AttributedString(" results"), layoutDirection: .rightToLeft).characters)
+        #expect(ended == "גרסה \u{2066}on 2024-05-01\u{2069} results")
+    }
+
+    @Test("Left-to-right text is unchanged, measures and phone numbers included", .tags(.rendering))
+    func leftToRightUnchangedWithMeasures() {
+        let english = AttributedString("Call +1 212 555 0123 within 1 ms, or 2 GB RAM on 2026-11-17.")
+        #expect(MarkdownBidiIsolation.isolated(english, layoutDirection: .leftToRight) == english)
+        // An English paragraph beside a Hebrew one keeps its spaces too.
+        let mixed = AttributedString("Call +1 212 555 0123 in 1 ms.\nשלום")
+        let shown = String(MarkdownBidiIsolation.isolated(mixed, layoutDirection: .leftToRight).characters)
+        #expect(shown == "Call +1 212 555 0123 in 1 ms.\nשלום")
+    }
+
+    @Test("The rendered node keeps the markdown's characters: no isolate and no no-break space", .tags(.rendering))
+    func renderedNodeUnchanged() throws {
+        let markdown = "السعر 12.50 دولار، والهاتف +966 50 123 4567، خلال أقل من 1 ms."
+        let paragraph = try #require(document(markdown).child(at: 0))
+        var renderer = MarkdownViewRenderer(configuration: MarkdownRendererConfiguration(), mathContext: nil, elementRenderers: [])
+        let attributed = try #require(renderer.visit(paragraph).asAttributedString)
+        #expect(String(attributed.characters) == markdown)
+        let shown = String(MarkdownBidiIsolation.isolated(attributed, layoutDirection: .rightToLeft).characters)
+        #expect(shown.contains("\u{2066}+966\u{00A0}50\u{00A0}123\u{00A0}4567\u{2069}،"))
+        #expect(shown.hasSuffix("\u{2066}1\u{00A0}ms\u{2069}."))
+        // Dropping the display characters gives the markdown back.
+        let stripped = String(shown.filter { $0 != MarkdownBidiIsolation.isolateStart && $0 != MarkdownBidiIsolation.isolateEnd })
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+        #expect(stripped == markdown)
+    }
+
+    #if canImport(AppKit)
+    @Test("Laid out right to left, the phone number never breaks and both cases read in order", .tags(.rendering))
+    func laidOutInOrder() throws {
+        let sentence = "السعر 12.50 دولار، والهاتف +966 50 123 4567، والتاريخ 2026-11-17. خلال أقل من 1 ms."
+        let shown = String(MarkdownBidiIsolation.isolated(AttributedString(sentence), layoutDirection: .rightToLeft).characters)
+        var brokeInsideWithoutTheFix = false
+        // From a column the number (about 135 pt with its comma) fits in; a narrower one must break it.
+        for width in stride(from: 180.0, through: 420.0, by: 4.0) {
+            let lines = Self.layout(shown, width: width)
+            let phone = try #require(Self.utf16Range(of: "+966\u{00A0}50\u{00A0}123\u{00A0}4567", in: shown))
+            let holding = lines.filter { NSIntersectionRange($0.range, phone).length > 0 }
+            #expect(holding.count == 1, "width \(width): the number is on one line")
+            // In that line its characters run left to right.
+            if let line = holding.first {
+                let xs = (phone.location..<NSMaxRange(phone)).map { CTLineGetOffsetForStringIndex(line.line, $0, nil) }
+                #expect(xs == xs.sorted(), "width \(width): +966 50 123 4567 in order")
+            }
+            let unit = try #require(Self.utf16Range(of: "1\u{00A0}ms", in: shown))
+            do {
+                let line = try #require(lines.first { NSIntersectionRange($0.range, unit) == unit }, "width \(width): 1 ms on one line")
+                let one = CTLineGetOffsetForStringIndex(line.line, unit.location, nil)
+                let m = CTLineGetOffsetForStringIndex(line.line, unit.location + 2, nil)
+                #expect(one < m, "width \(width): 1 ms, not ms 1")
+            }
+            // The control: the same isolates with plain spaces do break inside the number somewhere.
+            let plain = shown.replacingOccurrences(of: "\u{00A0}", with: " ")
+            let plainPhone = try #require(Self.utf16Range(of: "+966 50 123 4567", in: plain))
+            if Self.layout(plain, width: width).filter({ NSIntersectionRange($0.range, plainPhone).length > 0 }).count > 1 {
+                brokeInsideWithoutTheFix = true
+            }
+        }
+        #expect(brokeInsideWithoutTheFix, "the widths swept include one that broke the number before the fix")
+        // The control for the unit: unisolated, `1 ms` lays out as `ms 1`.
+        let raw = try #require(Self.utf16Range(of: "1 ms", in: sentence))
+        let rawLine = try #require(Self.layout(sentence, width: 420).first { NSIntersectionRange($0.range, raw) == raw })
+        #expect(CTLineGetOffsetForStringIndex(rawLine.line, raw.location, nil) > CTLineGetOffsetForStringIndex(rawLine.line, raw.location + 2, nil))
+    }
+
+    private static func utf16Range(of needle: String, in string: String) -> NSRange? {
+        let range = (string as NSString).range(of: needle)
+        return range.location == NSNotFound ? nil : range
+    }
+
+    /// `string` laid out by Core Text in a right-to-left paragraph `width` points wide.
+    private static func layout(_ string: String, width: CGFloat) -> [(line: CTLine, range: NSRange)] {
+        let style = NSMutableParagraphStyle()
+        style.baseWritingDirection = .rightToLeft
+        style.alignment = .natural
+        let attributed = NSAttributedString(
+            string: string, attributes: [.font: NSFont.systemFont(ofSize: 17), .paragraphStyle: style])
+        let setter = CTFramesetterCreateWithAttributedString(attributed)
+        let path = CGPath(rect: CGRect(x: 0, y: 0, width: width, height: 10_000), transform: nil)
+        let frame = CTFramesetterCreateFrame(setter, CFRange(location: 0, length: 0), path, nil)
+        let lines = CTFrameGetLines(frame) as! [CTLine]
+        return lines.map { line in
+            let range = CTLineGetStringRange(line)
+            return (line, NSRange(location: range.location, length: range.length))
+        }
+    }
+    #endif
 
     #if ENABLE_MATH_RENDERING
     @Test("A \\(...\\) formula is skipped too", .tags(.rendering))
@@ -252,7 +417,7 @@ struct MarkdownContentDirectionTests {
     @Test("A phone number beside a date, a URL with parentheses, a URL before a PDI", .tags(.rendering))
     func runBoundaries() {
         let both = String(MarkdownBidiIsolation.isolated(AttributedString("اتصل +1 212-555-0123 2026-11-17"), layoutDirection: .rightToLeft).characters)
-        #expect(both == "اتصل \u{2066}+1 212-555-0123\u{2069} \u{2066}2026-11-17\u{2069}")
+        #expect(both == "اتصل \u{2066}+1\u{00A0}212-555-0123\u{2069} \u{2066}2026-11-17\u{2069}")
         let parens = String(MarkdownBidiIsolation.isolated(AttributedString("راجع https://en.wikipedia.org/wiki/Swift_(language)"), layoutDirection: .rightToLeft).characters)
         #expect(parens == "راجع \u{2066}https://en.wikipedia.org/wiki/Swift_(language)\u{2069}")
         #expect(MarkdownContentDirection.firstStrong(inText: "\u{2066}https://x.org\u{2069} שלום", skipsMath: false) == .rightToLeft)
