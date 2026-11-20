@@ -276,6 +276,10 @@ struct MarkdownContentDirectionTests {
         #expect(shown("من -5 ms to +5 ms") == "من \u{2066}-5\u{00A0}ms to +5\u{00A0}ms\u{2069}")
         // A capitalised word after the number is a name or a clause, not a unit.
         #expect(shown("في عام 2024 Apple أعلنت") == "في عام 2024 Apple أعلنت")
+        // Mixed-case and short units are units.
+        for unit in ["GiB", "Hz", "MHz", "kWh", "dB", "Mbps", "Pa"] {
+            #expect(shown("السعة 2 \(unit) فقط") == "السعة \u{2066}2\u{00A0}\(unit)\u{2069} فقط", "\(unit)")
+        }
         // Two groups are two numbers: the floor stays out of the files' isolate.
         #expect(shown("في الطابق 3 100 files") == "في الطابق 3 \u{2066}100\u{00A0}files\u{2069}")
         // Text that writes its own isolates is left as written inside them, and W7 resumes after.

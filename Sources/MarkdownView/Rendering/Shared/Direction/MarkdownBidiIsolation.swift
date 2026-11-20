@@ -177,10 +177,11 @@ enum MarkdownBidiIsolation {
         var candidates: [(whole: Range<Int>, number: Range<Int>, units: [Range<Int>], unitLike: Bool)] = []
         var next = 0
         for match in matches {
-            // A unit is written in one case (`ms`, `GB`, `files`); a capitalised word is a name or
-            // starts a clause (`2024 Apple`), and reads after the number unisolated.
-            let word = string[match[1].upperBound..<match[0].upperBound].dropFirst().prefix { $0.isLetter }
-            let unitLike = word == word.lowercased() || word == word.uppercased()
+            // A capitalised word of four letters or more is a name or starts a clause (`2024 Apple`)
+            // and reads after the number unisolated; a unit is one case or short (`ms`, `GB`, `GiB`,
+            // `Hz`, `kWh`, `dB`), and a few longer ones are named.
+            let word = String(string[match[1].upperBound..<match[0].upperBound].dropFirst().prefix { $0.isLetter })
+            let unitLike = !isCapitalisedWord(word) || titleCaseUnits.contains(word)
             candidates.append((offsets[next], offsets[next + 1], Array(offsets[(next + 2)..<(next + match.count)]), unitLike))
             next += match.count
         }
@@ -227,6 +228,15 @@ enum MarkdownBidiIsolation {
         }
         return accepted
     }
+
+    /// `Word`: an uppercase letter, then three or more letters, all lowercase.
+    static func isCapitalisedWord(_ word: String) -> Bool {
+        guard word.count >= 4, let first = word.first, first.isUppercase else { return false }
+        return word.dropFirst().allSatisfy { $0.isLetter && $0.isLowercase }
+    }
+
+    /// Units written capitalised and four letters or longer.
+    static let titleCaseUnits: Set<String> = ["Mbps", "Kbps", "Gbps", "Tbps", "Mbit", "Gbit", "Kbit"]
 
     static let noBreakSpace: Character = "\u{00A0}"
 
