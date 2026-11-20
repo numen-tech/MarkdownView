@@ -260,6 +260,9 @@ struct MarkdownContentDirectionTests {
         // A Latin letter inside an isolate is invisible to W7, so it does not count as one.
         #expect(shown("خلال 1 ms، 2 GB") == "خلال \u{2066}1\u{00A0}ms\u{2069}، \u{2066}2\u{00A0}GB\u{2069}")
         #expect(shown("راجع https://example.com/v 2 ok") == "راجع \u{2066}https://example.com/v\u{2069} \u{2066}2\u{00A0}ok\u{2069}")
+        // A URL ends at a paragraph separator, and the next paragraph's measure is its own.
+        let separated = shown("راجع https://x.org\u{2029}خلال 1 ms")
+        #expect(separated == "راجع \u{2066}https://x.org\u{2069}\u{2029}خلال \u{2066}1\u{00A0}ms\u{2069}")
         // No space, no swap: `5GB` is one run already.
         #expect(shown("حجم 5GB فقط") == "حجم 5GB فقط")
         // A sign, a range, a label's colon, an accented unit, a grouped number's unit.
