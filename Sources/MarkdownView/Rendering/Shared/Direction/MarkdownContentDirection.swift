@@ -26,6 +26,7 @@ public enum MarkdownContentDirection {
         for scalar in text.unicodeScalars {
             switch scalar.value {
             case 0x2066...0x2068: isolates += 1
+            case 0x000A, 0x000D, 0x001C...0x001E, 0x0085, 0x2029: isolates = 0  // paragraph separators (B)
             case 0x2069: isolates = max(isolates - 1, 0)
             default:
                 if isolates == 0, let direction = strongDirection(of: scalar) { return direction }
@@ -110,7 +111,9 @@ public enum MarkdownContentDirection {
             break
         }
         for child in markup.children {
-            if child is any BlockMarkup { isolates = 0 }
+            // A block, a table cell and a hard line break each end every isolate (the display
+            // shows a cell as its own text and a hard break as a paragraph separator).
+            if child is any BlockMarkup || child is Markdown.Table.Cell || child is LineBreak { isolates = 0 }
             if let direction = of(child, skipsMath: skipsMath, isolates: &isolates) { return direction }
         }
         return nil
@@ -144,6 +147,7 @@ public enum MarkdownContentDirection {
             let scalar = text.unicodeScalars[index]
             switch scalar.value {
             case 0x2066...0x2068: isolates += 1
+            case 0x000A, 0x000D, 0x001C...0x001E, 0x0085, 0x2029: isolates = 0  // paragraph separators (B)
             case 0x2069: isolates = max(isolates - 1, 0)
             default:
                 if isolates == 0, let direction = strongDirection(of: scalar) { return direction }

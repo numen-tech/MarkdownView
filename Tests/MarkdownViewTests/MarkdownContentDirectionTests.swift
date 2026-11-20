@@ -144,6 +144,18 @@ struct MarkdownContentDirectionTests {
         #expect(MarkdownContentDirection.of(block, skipsMath: false) == expected)
     }
 
+    @Test("An isolate left open in a table cell or before a hard line break ends there", .tags(.rendering))
+    func depthResetsPerCellAndHardBreak() throws {
+        let table = try #require(document("| \u{2067}abc | مرحبا |\n|---|---|\n| 1 | 2 |").child(at: 0))
+        #expect(MarkdownContentDirection.of(table, skipsMath: false) == .rightToLeft)
+        let paragraph = try #require(document("\u{2067}**abc**\\\nمرحبا").child(at: 0))
+        #expect(MarkdownContentDirection.of(paragraph, skipsMath: false) == .rightToLeft)
+        // A soft break is a space on screen: the isolate carries across it.
+        let soft = try #require(document("\u{2067}**abc**\nمرحبا").child(at: 0))
+        #expect(MarkdownContentDirection.of(soft, skipsMath: false) == nil)
+        #expect(MarkdownContentDirection.firstStrong(in: "\u{2067}abc\u{2029}مرحبا") == .rightToLeft)
+    }
+
     @Test("An isolate left open in one block does not reach the next", .tags(.rendering))
     func depthResetsPerBlock() throws {
         let quote = try #require(document("> \u{2067}abc\n>\n> مرحبا").child(at: 0))
